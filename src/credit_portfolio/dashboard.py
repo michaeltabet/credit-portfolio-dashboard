@@ -11,7 +11,7 @@ Layout (top to bottom):
   - Tab 4: Stress Testing
   - Tab 5: Monte Carlo
 
-Core analyses (HMM/BL, backtest, Monte Carlo) auto-run on first load.
+Click "Run Analysis" to compute all models.
 """
 
 import streamlit as st
@@ -118,10 +118,7 @@ with st.sidebar:
     st.divider()
     run_btn = st.button("Run Analysis", type="primary", use_container_width=True)
 
-# Auto-run on first load
-if "auto_ran" not in st.session_state:
-    st.session_state["auto_ran"] = True
-    run_btn = True
+# No auto-run — user clicks "Run Analysis" to start
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -279,10 +276,10 @@ def _run_monte_carlo(tilt_strength, momentum_window, tc_bps,
 
 
 # ══════════════════════════════════════════════════════════════════
-# AUTO-RUN CORE ANALYSES FOR KPI ROW
+# RUN ANALYSES ONLY ON BUTTON CLICK (lazy load for Streamlit Cloud)
 # ══════════════════════════════════════════════════════════════════
 
-if run_btn or "hmm_bl" not in st.session_state:
+if run_btn:
     with st.spinner("Fitting HMM + Black-Litterman on FRED data..."):
         try:
             st.session_state["hmm_bl"] = _run_hmm_bl(
@@ -291,7 +288,6 @@ if run_btn or "hmm_bl" not in st.session_state:
             st.error(f"HMM/BL failed: {e}")
             st.session_state["hmm_bl"] = None
 
-if run_btn or "hist_result" not in st.session_state:
     with st.spinner("Running historical backtest on FRED data..."):
         try:
             st.session_state["hist_result"] = _run_hist_backtest(
@@ -300,7 +296,6 @@ if run_btn or "hist_result" not in st.session_state:
             st.error(f"Historical backtest failed: {e}")
             st.session_state["hist_result"] = None
 
-if run_btn or "mc_result" not in st.session_state:
     with st.spinner("Running Monte Carlo simulation..."):
         try:
             st.session_state["mc_result"] = _run_monte_carlo(
@@ -626,7 +621,7 @@ with tab2:
 # TAB 3: PROPHET FORECASTS (real FRED data)
 # ══════════════════════════════════════════════════════════════════
 with tab3:
-    if run_btn or "prophet_result" not in st.session_state:
+    if run_btn:
         with st.spinner("Running Prophet forecasts on FRED data (~30s)..."):
             try:
                 views = _run_prophet(
@@ -694,7 +689,7 @@ with tab3:
 # TAB 4: STRESS TESTING (real FRED data, bucket level)
 # ══════════════════════════════════════════════════════════════════
 with tab4:
-    if run_btn or "stress_result" not in st.session_state:
+    if run_btn:
         with st.spinner("Running stress test on FRED data..."):
             try:
                 stress_result = _run_stress(
