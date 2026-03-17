@@ -1,15 +1,18 @@
 """
 Model Explainer Agent — generates plain-English explanations of model
-outputs, portfolio decisions, and methodology.
+outputs, portfolio decisions, and methodology via Groq LLM.
 
 This module provides two capabilities:
-  1. explain_current_state() — summarize the full model state in plain text
-  2. answer_question() — respond to natural-language questions about the model
+  1. explain_current_state() — full narrative briefing on what the model sees
+  2. answer_question() — answer specific questions about the portfolio
 
-Uses Claude API for natural language generation when available,
-falls back to template-based explanations otherwise.
+Both call Groq (LLaMA 3) with the full model state serialized as context,
+so the LLM can reason over real numbers and write like a senior analyst
+sending you an email.
 """
 
+import os
+import json
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
@@ -48,256 +51,327 @@ class ModelState:
     mc_median_return: float | None = None
 
 
-def explain_current_state(state: ModelState) -> str:
-    """Generate a full plain-English explanation of the current model state."""
+def _serialize_state(state: ModelState) -> str:
+    """Convert ModelState to a readable string for the LLM prompt."""
     sections = []
 
-    # ── Regime ─────────────────────────────────────────────────────
     if state.regime:
-        regime_text = {
-            "COMPRESSION": (
-                "The HMM identifies the current regime as **Compression** — spreads are tight, "
-                "volatility is low, and mean-reversion dynamics are strong. In this environment, "
-                "the model trusts its equilibrium prior more (low τ) and treats Prophet forecasts "
-                "as relatively reliable (low ω). This means the portfolio leans toward the "
-                "market-implied allocation with modest factor tilts."
-            ),
-            "NORMAL": (
-                "The HMM identifies the current regime as **Normal** — spreads are near their "
-                "long-run average with moderate volatility. The model uses standard BL parameters "
-                "(τ = 0.025, ω = 1.0), balancing equilibrium priors against forecast views equally. "
-                "Factor signals have the most influence in this regime because neither the prior "
-                "nor the views are dominant."
-            ),
-            "STRESS": (
-                "The HMM identifies the current regime as **Stress** — spreads are wide, "
-                "volatility is elevated, and tail risk is high. The model increases prior uncertainty "
-                "(high τ) and dampens forecast confidence (high ω). This is a defensive posture: "
-                "the portfolio should rotate toward higher-quality buckets and reduce active bets."
-            ),
-        }
-        conf_pct = f"{state.regime_confidence:.0%}" if state.regime_confidence > 0 else "N/A"
-        sections.append(f"## Market Regime\n\n{regime_text.get(state.regime, 'Unknown regime.')}\n\n"
-                        f"Regime confidence: **{conf_pct}**")
+        s = f"REGIME: {state.regime} (confidence: {state.regime_confidence:.1%})"
+        if state.transition_matrix is not None:
+            labels = ["Compression", "Normal", "Stress"]
+            rows = []
+            for i in range(min(state.transition_matrix.shape[0], 3)):
+                row_str = ", ".join(
+                    f"{labels[j]}: {state.transition_matrix[i, j]:.0%}"
+                    for j in range(min(state.transition_matrix.shape[1], 3))
+                )
+                rows.append(f"  From {labels[i]}: {row_str}")
+            s += "\nTransition matrix:\n" + "\n".join(rows)
+        sections.append(s)
 
-    # ── BL Returns ─────────────────────────────────────────────────
     if state.posterior_returns:
-        bl_lines = ["## Black-Litterman Expected Returns\n"]
-        bl_lines.append("The BL model blends market equilibrium with our spread forecasts:\n")
-        bl_lines.append("| Bucket | Prior | View | Posterior |")
-        bl_lines.append("|--------|-------|------|-----------|")
-        for bucket in ["AAA", "AA", "A", "BBB"]:
-            prior = (state.prior_returns or {}).get(bucket, 0) * 100
-            view = (state.view_returns or {}).get(bucket, 0) * 100
-            post = state.posterior_returns.get(bucket, 0) * 100
-            bl_lines.append(f"| {bucket} | {prior:+.2f}% | {view:+.2f}% | {post:+.2f}% |")
+        lines = ["BLACK-LITTERMAN EXPECTED RETURNS:"]
+        for b in ["AAA", "AA", "A", "BBB"]:
+            prior = (state.prior_returns or {}).get(b, 0) * 100
+            view = (state.view_returns or {}).get(b, 0) * 100
+            post = state.posterior_returns.get(b, 0) * 100
+            lines.append(f"  {b}: Prior={prior:+.2f}%  View={view:+.2f}%  Posterior={post:+.2f}%")
+        sections.append("\n".join(lines))
 
-        # Interpretation
-        posts = state.posterior_returns
-        best_bucket = max(posts, key=posts.get)
-        worst_bucket = min(posts, key=posts.get)
-        bl_lines.append(f"\nThe model expects **{best_bucket}** to have the highest return and "
-                        f"**{worst_bucket}** the lowest. The posterior tilts allocation accordingly.")
-        sections.append("\n".join(bl_lines))
-
-    # ── Prophet Forecasts ──────────────────────────────────────────
     if state.prophet_forecasts:
-        pf_lines = ["## Prophet OAS Forecasts\n"]
-        tightening = []
-        widening = []
+        # Detect horizon from forecast data if available
+        sample = next(iter(state.prophet_forecasts.values()), {})
+        horizon = sample.get("horizon_months", 3)
+        lines = [f"PROPHET OAS FORECASTS (horizon: {horizon} months):"]
         for bucket, v in state.prophet_forecasts.items():
             delta_bp = v.get("delta_oas", 0) * 100
-            if delta_bp < 0:
-                tightening.append((bucket, delta_bp))
-            else:
-                widening.append((bucket, delta_bp))
+            lines.append(
+                f"  {bucket}: Current={v.get('current_oas', 0):.2f}%  "
+                f"Forecast={v.get('forecast_oas', 0):.2f}%  "
+                f"Delta={delta_bp:+.1f}bp  "
+                f"ExpReturn={v.get('expected_return', 0) * 100:+.2f}%"
+            )
+        sections.append("\n".join(lines))
 
-        if tightening:
-            names = ", ".join(f"**{b}** ({d:+.0f}bp)" for b, d in tightening)
-            pf_lines.append(f"Prophet forecasts **spread tightening** for {names}. "
-                            "Tightening generates positive price returns (bond prices rise).")
-        if widening:
-            names = ", ".join(f"**{b}** ({d:+.0f}bp)" for b, d in widening)
-            pf_lines.append(f"\nProphet forecasts **spread widening** for {names}. "
-                            "Widening generates negative price returns but increases future carry.")
-        sections.append("\n".join(pf_lines))
-
-    # ── Backtest ───────────────────────────────────────────────────
     if state.backtest_stats:
         s = state.backtest_stats
-        bt_lines = ["## Historical Backtest\n"]
-        sharpe = s.get("sharpe_strategy", 0)
-        alpha = s.get("ann_alpha", 0) * 100
-        ir = s.get("information_ratio", 0)
-        hit = s.get("hit_rate", 0)
+        lines = ["HISTORICAL BACKTEST:"]
+        for k, v in s.items():
+            if isinstance(v, float):
+                lines.append(f"  {k}: {v:.4f}")
+            else:
+                lines.append(f"  {k}: {v}")
+        sections.append("\n".join(lines))
 
-        if sharpe > 0.5:
-            bt_lines.append(f"The strategy achieves a **{sharpe:.2f} Sharpe ratio** — "
-                            "this is a reasonably strong risk-adjusted return for a constrained IG strategy.")
-        elif sharpe > 0:
-            bt_lines.append(f"The strategy achieves a **{sharpe:.2f} Sharpe ratio** — "
-                            "positive but modest, typical for a 4-bucket rotation strategy.")
-        else:
-            bt_lines.append(f"The strategy has a **negative Sharpe ratio** ({sharpe:.2f}), "
-                            "indicating the factor tilts are not adding value in this configuration.")
+    if state.current_weights:
+        lines = ["CURRENT PORTFOLIO WEIGHTS vs BENCHMARK:"]
+        for b in ["AAA", "AA", "A", "BBB"]:
+            w = state.current_weights.get(b, 0)
+            bw = (state.benchmark_weights or {}).get(b, 0)
+            lines.append(f"  {b}: Portfolio={w:.1%}  Benchmark={bw:.0%}  Tilt={w - bw:+.1%}")
+        sections.append("\n".join(lines))
 
-        bt_lines.append(f"\nAnnualized alpha: **{alpha:+.1f}bp** | "
-                        f"Information ratio: **{ir:.2f}** | "
-                        f"Hit rate: **{hit:.0%}**")
-
-        if alpha > 0:
-            bt_lines.append("\nThe positive alpha indicates the factor signals have "
-                            "historically added value over the market-cap benchmark.")
-        sections.append("\n".join(bt_lines))
-
-    # ── Stress Test ────────────────────────────────────────────────
     if state.stress_price_impact:
-        st_lines = [f"## Stress Test: {state.stress_scenario}\n"]
-        worst_bucket = min(state.stress_price_impact, key=state.stress_price_impact.get)
-        worst_impact = state.stress_price_impact[worst_bucket] * 100
-        total_impact = sum(
-            state.stress_price_impact[b] * (state.current_weights or {}).get(b, 0.25)
-            for b in state.stress_price_impact
-        ) * 100
+        lines = [f"STRESS TEST ({state.stress_scenario}):"]
+        for b, v in state.stress_price_impact.items():
+            lines.append(f"  {b}: price impact = {v * 100:+.2f}%")
+        sections.append("\n".join(lines))
 
-        st_lines.append(f"Under the **{state.stress_scenario}** scenario:\n")
-        st_lines.append(f"- Worst-hit bucket: **{worst_bucket}** ({worst_impact:+.1f}% price impact)")
-        st_lines.append(f"- Estimated portfolio-level price impact: **{total_impact:+.1f}%**")
-
-        if abs(total_impact) > 5:
-            st_lines.append("\nThis is a severe scenario. Consider reducing active tilts "
-                            "or increasing quality allocation.")
-        sections.append("\n".join(st_lines))
-
-    # ── Monte Carlo ────────────────────────────────────────────────
     if state.mc_var_95 is not None:
-        mc_lines = ["## Monte Carlo Risk\n"]
-        mc_lines.append(f"Based on Monte Carlo simulation of real historical returns:\n")
-        mc_lines.append(f"- **95% VaR**: {state.mc_var_95 * 100:+.2f}% "
-                        "(there's a 5% chance of losing more than this)")
+        lines = ["MONTE CARLO RISK:"]
+        lines.append(f"  95% VaR: {state.mc_var_95 * 100:+.2f}%")
         if state.mc_cvar_95 is not None:
-            mc_lines.append(f"- **95% CVaR**: {state.mc_cvar_95 * 100:+.2f}% "
-                            "(average loss in the worst 5% of scenarios)")
+            lines.append(f"  95% CVaR: {state.mc_cvar_95 * 100:+.2f}%")
         if state.mc_p_loss is not None:
-            mc_lines.append(f"- **P(Loss)**: {state.mc_p_loss:.1%} "
-                            "(probability of any negative return over the horizon)")
+            lines.append(f"  P(Loss): {state.mc_p_loss:.1%}")
         if state.mc_median_return is not None:
-            mc_lines.append(f"- **Median return**: {state.mc_median_return * 100:+.2f}%")
-        sections.append("\n".join(mc_lines))
+            lines.append(f"  Median return: {state.mc_median_return * 100:+.2f}%")
+        sections.append("\n".join(lines))
 
     if not sections:
+        return "No model data available yet."
+
+    return "\n\n".join(sections)
+
+
+SYSTEM_PROMPT = """You are the explainer for a regime-conditional credit factor rotation model.
+You know EXACTLY how this model works. Use this knowledge to explain outputs accurately.
+NEVER speculate beyond what the model can actually tell you.
+
+═══ MODEL ARCHITECTURE ═══
+
+DATA: Monthly FRED OAS for 4 IG rating buckets (AAA, AA, A, BBB). ~300 months of history.
+Market-cap benchmark weights: AAA 4%, AA 12%, A 34%, BBB 50%.
+Approximate durations: AAA ~8yr, AA ~7yr, A ~6yr, BBB ~5yr.
+Returns approximated as: r ≈ carry (OAS/12) + price return (-Duration × ΔOAS).
+This is an approximation — actual index returns include convexity, option value, rate effects.
+
+COMPONENT 1 — HMM REGIME DETECTION:
+- 3-state Gaussian HMM (Compression / Normal / Stress) fitted on OAS level + 1m/3m/6m changes
+- Trained via Baum-Welch EM on expanding window (full history at each rebalance)
+- Outputs: current regime label, state probabilities, transition matrix
+- Regimes are persistent (>90% self-transition probability)
+- LIMITATION: HMM classifies current state from PAST data. It CANNOT predict regime transitions.
+  When a transition happens, it's often already underway before HMM detects it.
+
+COMPONENT 2 — PROPHET OAS FORECASTS:
+- Facebook Prophet fitted per bucket. Logistic growth trend + yearly Fourier seasonality.
+- Horizon: THE CONFIGURED HORIZON (check the data — usually 3 months). It CANNOT say anything
+  about what happens beyond that horizon.
+- Cap = 2.5 × max(OAS history) — prevents forecasts of infinite spreads.
+- Refitted monthly using only past data (no look-ahead).
+- LIMITATION: Very noisy at monthly frequency. Low signal-to-noise. No economic variables
+  (no Fed funds rate, no unemployment, no VIX). Purely reactive to past OAS patterns.
+  Single-bucket model — no cross-bucket correlation captured.
+
+COMPONENT 3 — BLACK-LITTERMAN:
+- Blends market equilibrium prior (π = λ × Σ × w_mkt) with Prophet views (Q vector).
+- Σ = 60-month rolling covariance. λ = 2.5 risk aversion.
+- HMM regime sets two critical parameters:
+    Compression: τ=0.010 (trust prior), ω=0.5 (trust Prophet) → tilts toward views
+    Normal:      τ=0.025, ω=1.0 → balanced
+    Stress:      τ=0.075 (distrust prior), ω=3.0 (distrust Prophet) → stays near prior, defensive
+- This is ADAPTIVE REGULARIZATION — the model automatically reduces active risk in stress.
+- Posterior μ_BL feeds into weight construction.
+- LIMITATION: Assumes CAPM equilibrium. τ and ω are fixed lookup rules, not optimized.
+
+COMPONENT 4 — CREDIT FACTORS:
+- DTS (Duration × Spread): 50% weight. Higher DTS = more spread-duration compensation.
+- Value (log OAS z-score): 25% weight. Wide spreads = cheap, likely to mean-revert.
+- Momentum (trailing 6-month excess return): 25% weight.
+- Composite z-score tilts weights from benchmark by α=0.10 (conservative).
+- Weight floor: 1% per bucket. Max tilt ~10%.
+- LIMITATION: With only 4 buckets, DTS and Value mostly signal "overweight BBB" structurally.
+  Momentum is the only genuine cross-sectional signal. Factor weights are STATIC (not regime-dependent).
+
+COMPONENT 5 — BACKTEST:
+- Monthly rebalancing. 5bp transaction costs (institutional).
+- Compares strategy vs market-cap benchmark over full history.
+- LIMITATION: HMM trained on full sample = mild look-ahead bias. Return approximation
+  (duration × ΔOAS + carry) diverges from actual index total returns. Monthly frequency
+  misses intra-month dislocations.
+
+COMPONENT 6 — MONTE CARLO:
+- Empirical bootstrap of historical backtest returns. NOT parametric (preserves fat tails).
+- Horizon typically 12-24 months.
+- LIMITATION: Assumes past return distribution is representative of future. Does NOT
+  condition on current regime (mixes compression/normal/stress returns equally).
+  New types of stress not in history won't be captured.
+
+COMPONENT 7 — STRESS TESTING:
+- Deterministic OAS shocks applied to current portfolio. Single-period, no cascading effects.
+- LIMITATION: No correlation expansion under stress. No credit events (defaults, downgrades).
+  Does not model whether rebalancing happens during dislocation.
+
+═══ RULES FOR YOUR EXPLANATIONS ═══
+
+1. NEVER recommend actions. No "you should", "consider reducing", "stay the course".
+   Only explain what the model does and what the numbers imply.
+
+2. NEVER claim the model predicts beyond Prophet's configured horizon. If Prophet is
+   set to 3 months, say "Prophet's 3-month forecast shows..." — do NOT extrapolate
+   to 6 months or a year.
+
+3. ALWAYS explain causation through the pipeline: regime → τ/ω → BL posterior → factor tilts → weights.
+   The PM wants to understand WHY the model is positioned the way it is.
+
+4. ACKNOWLEDGE limitations when relevant. If alpha is small, note that a 4-bucket universe
+   structurally limits alpha generation. If Monte Carlo P(Loss) seems high, note the bootstrap
+   doesn't condition on current regime.
+
+5. Use actual numbers from the data provided. Say "+5bp alpha" not "positive alpha".
+
+6. Write like a PM commentary — flowing paragraphs, no bullet points, **bold** key numbers.
+   300-500 words for full briefings. 2-4 sentences for Q&A answers.
+
+7. When discussing implications, frame them as what the model's outputs SUGGEST given the
+   architecture, not what WILL happen. Example: "The BL posterior implies the model expects
+   BBB to outperform over the forecast horizon, driven by Prophet's tightening view —
+   though Prophet's noisy monthly signal means this conviction is moderate at best."
+
+8. NEVER say spreads will "continue" or "remain" beyond the forecast horizon.
+   NEVER predict regime transitions (HMM can't do this).
+   NEVER claim the backtest proves future performance.
+   NEVER say "ensure", "monitor", "stay aligned" or any variation of advice.
+
+9. Do NOT write a summary paragraph at the end. End after covering the risk metrics.
+   The PM doesn't need you to restate what you just said."""
+
+
+def _get_groq_key() -> str:
+    """Resolve the working Groq API key."""
+    # Check Streamlit secrets first (for Streamlit Cloud deployment)
+    try:
+        import streamlit as st
+        key = st.secrets.get("GROQ_API_KEY", "")
+        if key:
+            return key
+    except Exception:
+        pass
+    # Check env var
+    key = os.environ.get("GROQ_API_KEY", "")
+    if key:
+        return key
+    # Fallback: read from .zshrc
+    zshrc = os.path.expanduser("~/.zshrc")
+    if os.path.exists(zshrc):
+        with open(zshrc) as f:
+            for line in f:
+                if "GROQ_API_KEY" in line and "export" in line:
+                    # extract value between quotes
+                    parts = line.split('"')
+                    if len(parts) >= 2:
+                        return parts[1]
+    return ""
+
+
+def _call_groq(system: str, user_msg: str, max_tokens: int = 1200) -> str:
+    """Call Groq LLM API."""
+    from groq import Groq
+
+    def _create(client):
+        return client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.4,
+            max_tokens=max_tokens,
+        )
+
+    api_key = _get_groq_key()
+    client = Groq(api_key=api_key)
+
+    try:
+        response = _create(client)
+        return response.choices[0].message.content
+    except Exception as first_err:
+        # If env key fails, try reading from .zshrc directly
+        if "invalid_api_key" in str(first_err).lower() or "401" in str(first_err):
+            zshrc = os.path.expanduser("~/.zshrc")
+            if os.path.exists(zshrc):
+                with open(zshrc) as f:
+                    for line in f:
+                        if "GROQ_API_KEY" in line and "export" in line:
+                            parts = line.split('"')
+                            if len(parts) >= 2:
+                                fallback_key = parts[1]
+                                if fallback_key != api_key:
+                                    client2 = Groq(api_key=fallback_key)
+                                    response = _create(client2)
+                                    return response.choices[0].message.content
+        raise
+
+
+def explain_current_state(state: ModelState) -> str:
+    """Generate a full narrative briefing on the current model state via Groq."""
+    data = _serialize_state(state)
+    if data == "No model data available yet.":
         return "No model state available. Run the analysis first."
 
-    return "\n\n---\n\n".join(sections)
+    user_msg = (
+        "Here is the complete model state for our systematic IG credit strategy. "
+        "Explain what the model is doing, what it sees, and what the outputs imply "
+        "about future performance. Cover the regime, how BL is blending views, "
+        "where alpha has come from, what the forecasts show, and what the risk "
+        "metrics imply. Do NOT make any recommendations.\n\n"
+        f"{data}"
+    )
+
+    try:
+        return _call_groq(SYSTEM_PROMPT, user_msg)
+    except Exception as e:
+        # Fallback to basic template if Groq fails
+        return _fallback_explain(state, str(e))
 
 
 def answer_question(question: str, state: ModelState) -> str:
-    """
-    Answer a natural-language question about the model.
+    """Answer a specific question about the model via Groq."""
+    data = _serialize_state(state)
 
-    This is a rule-based responder for common questions. For complex questions,
-    consider routing to Claude API via the commentary module.
-    """
-    q = question.lower().strip()
+    user_msg = (
+        f"The portfolio manager asks: \"{question}\"\n\n"
+        f"Here is the full model state:\n\n{data}\n\n"
+        f"Answer their question directly using the actual numbers. "
+        f"Be concise — 2-4 sentences max. Explain what the model shows and what it implies. "
+        f"Do NOT make recommendations or say what they should do."
+    )
 
-    # Regime questions
-    if any(w in q for w in ["regime", "hmm", "state", "market condition"]):
-        if state.regime:
-            explanation = {
-                "COMPRESSION": "tight spreads and low volatility — the model is in a risk-on posture",
-                "NORMAL": "average spreads and moderate volatility — the model uses balanced parameters",
-                "STRESS": "wide spreads and high volatility — the model is defensive",
-            }
-            return (f"The current regime is **{state.regime}** ({state.regime_confidence:.0%} confidence). "
-                    f"This means {explanation.get(state.regime, 'unknown conditions')}. "
-                    f"The regime determines two key parameters: τ (how much we trust the equilibrium prior) "
-                    f"and ω (how much we trust Prophet forecasts).")
-        return "No regime data available. Run the HMM analysis first."
+    try:
+        return _call_groq(SYSTEM_PROMPT, user_msg, max_tokens=400)
+    except Exception as e:
+        return f"Groq API error: {e}\n\nModel state:\n{data}"
 
-    # BL questions
-    if any(w in q for w in ["black-litterman", "bl ", "expected return", "posterior", "prior"]):
-        if state.posterior_returns:
-            best = max(state.posterior_returns, key=state.posterior_returns.get)
-            return (f"The Black-Litterman model combines the market equilibrium (prior) with Prophet "
-                    f"forecast views to produce posterior expected returns. Currently, **{best}** has "
-                    f"the highest posterior return ({state.posterior_returns[best]*100:+.2f}%). "
-                    f"The posterior is a weighted average — in stress regimes it stays closer to the "
-                    f"prior; in compression it incorporates more of the forecast view.")
-        return "No BL data available. Run the analysis first."
 
-    # Prophet questions
-    if any(w in q for w in ["prophet", "forecast", "predict", "oas forecast"]):
-        if state.prophet_forecasts:
-            lines = ["Prophet forecasts OAS for each rating bucket using logistic-growth decomposition:\n"]
-            for bucket, v in state.prophet_forecasts.items():
-                delta = v.get("delta_oas", 0) * 100
-                direction = "tightening" if delta < 0 else "widening"
-                lines.append(f"- **{bucket}**: {v.get('current_oas', 0):.2f}% → "
-                             f"{v.get('forecast_oas', 0):.2f}% ({delta:+.0f}bp {direction})")
-            lines.append("\nTightening = positive for bond prices. Widening = negative but increases carry.")
-            return "\n".join(lines)
-        return "No Prophet data available. Run the analysis first."
+def _fallback_explain(state: ModelState, error: str) -> str:
+    """Template fallback if Groq is unavailable."""
+    sections = [f"*Groq API unavailable ({error}) — showing raw model summary:*\n"]
 
-    # Factor questions
-    if any(w in q for w in ["factor", "dts", "value", "momentum", "signal", "composite"]):
-        return (
-            "The strategy uses three credit factors:\n\n"
-            "1. **DTS (Duration × Spread)** — weight: 50% — measures spread-duration risk. "
-            "Higher DTS = more compensation for spread risk.\n"
-            "2. **Value** — weight: 25% — cross-sectional z-score of log(OAS). "
-            "Wider spreads relative to peers = cheaper = expected to tighten.\n"
-            "3. **Momentum** — weight: 25% — trailing 6-month cumulative excess return. "
-            "Buckets with positive momentum tend to continue outperforming.\n\n"
-            "These are combined into a composite z-score that tilts portfolio weights "
-            "away from the market-cap benchmark."
+    if state.regime:
+        sections.append(f"**Regime:** {state.regime} ({state.regime_confidence:.0%} confidence)")
+
+    if state.backtest_stats:
+        s = state.backtest_stats
+        sections.append(
+            f"**Backtest:** Sharpe {s.get('sharpe_strategy', 0):.2f} | "
+            f"Alpha {s.get('ann_alpha', 0) * 100:+.1f}bp | "
+            f"IR {s.get('information_ratio', 0):.2f} | "
+            f"Max DD {s.get('max_drawdown_strategy', 0):.1%}"
         )
 
-    # Risk questions
-    if any(w in q for w in ["risk", "var", "cvar", "monte carlo", "drawdown", "loss"]):
-        if state.mc_var_95 is not None:
-            return (f"Based on Monte Carlo simulation:\n"
-                    f"- 95% VaR: {state.mc_var_95*100:+.2f}% (5% chance of worse)\n"
-                    f"- 95% CVaR: {(state.mc_cvar_95 or 0)*100:+.2f}% (average in worst 5%)\n"
-                    f"- P(Loss): {(state.mc_p_loss or 0):.1%}\n\n"
-                    f"VaR tells you the threshold; CVaR tells you how bad it gets past that threshold.")
-        if state.backtest_stats:
-            dd = state.backtest_stats.get("max_drawdown_strategy", 0)
-            return f"Historical max drawdown: {dd:.1%}. Run Monte Carlo for forward-looking risk estimates."
-        return "No risk data available. Run Monte Carlo analysis first."
+    if state.mc_var_95 is not None:
+        sections.append(
+            f"**Risk:** 95% VaR {state.mc_var_95 * 100:+.2f}% | "
+            f"CVaR {(state.mc_cvar_95 or 0) * 100:+.2f}% | "
+            f"P(Loss) {(state.mc_p_loss or 0):.1%}"
+        )
 
-    # Stress test questions
-    if any(w in q for w in ["stress", "shock", "crisis", "scenario"]):
-        if state.stress_price_impact:
-            impacts = ", ".join(
-                f"{b}: {v*100:+.1f}%" for b, v in state.stress_price_impact.items()
-            )
-            return (f"Under the **{state.stress_scenario}** scenario, the price impacts are:\n"
-                    f"{impacts}\n\n"
-                    f"These represent the immediate mark-to-market loss from the spread shock, "
-                    f"calculated as -Duration × ΔOAS for each bucket.")
-        return "No stress test data available. Run the stress test first."
+    if state.posterior_returns:
+        best = max(state.posterior_returns, key=state.posterior_returns.get)
+        sections.append(
+            f"**BL:** Highest posterior return: {best} "
+            f"({state.posterior_returns[best] * 100:+.2f}%)"
+        )
 
-    # Weight / allocation questions
-    if any(w in q for w in ["weight", "allocation", "position", "portfolio"]):
-        if state.current_weights:
-            lines = ["Current portfolio allocation vs benchmark:\n"]
-            for b in ["AAA", "AA", "A", "BBB"]:
-                w = state.current_weights.get(b, 0)
-                bw = (state.benchmark_weights or {}).get(b, 0)
-                tilt = w - bw
-                lines.append(f"- **{b}**: {w:.1%} (benchmark: {bw:.0%}, tilt: {tilt:+.1%})")
-            return "\n".join(lines)
-        return "No weight data available. Run the backtest first."
-
-    # Generic / catch-all
-    return (
-        "I can explain the following aspects of the model:\n\n"
-        "- **Regime** — What regime is the market in? How does it affect the model?\n"
-        "- **Black-Litterman** — How are expected returns computed?\n"
-        "- **Prophet** — What are the OAS forecasts?\n"
-        "- **Factors** — How do DTS, Value, and Momentum work?\n"
-        "- **Risk** — What are VaR/CVaR and the loss probability?\n"
-        "- **Stress** — What happens under different shock scenarios?\n"
-        "- **Weights** — What is the current allocation?\n\n"
-        "Ask about any of these topics and I'll explain in detail."
-    )
+    return "\n\n".join(sections)
