@@ -1,0 +1,729 @@
+# ═══════════════════════════════════════════════════════════════════════
+# SYSTEMATIC CREDIT FACTOR INDEX — METHODOLOGY DOCUMENT
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Version:  1.0
+# Date:     2026-03-17
+# Status:   Draft
+#
+# This document describes the complete methodology for a systematic
+# factor-based investment-grade credit allocation strategy.  It covers
+# the investment universe, factor definitions, signal construction,
+# portfolio construction, rebalancing mechanics, return attribution,
+# and backtest methodology.
+#
+# All configurable parameters reference config.yaml.  No parameters
+# are hardcoded in the codebase.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 1. INVESTMENT UNIVERSE
+# ─────────────────────────────────────────────────────────────────────
+
+investment_universe:
+
+  description: |
+    The strategy invests across four investment-grade (IG) credit
+    rating buckets within the US corporate bond market.  Each bucket
+    corresponds to an ICE BofA option-adjusted spread (OAS) index
+    published daily by the Federal Reserve Bank of St. Louis (FRED).
+
+  eligible_buckets:
+    - label: AAA
+      fred_series: BAMLC0A1CAAA
+      friendly_name: oas_aaa
+      description: ICE BofA AAA US Corporate Index OAS
+    - label: AA
+      fred_series: BAMLC0A2CAA
+      friendly_name: oas_aa
+      description: ICE BofA AA US Corporate Index OAS
+    - label: A
+      fred_series: BAMLC0A3CA
+      friendly_name: oas_a
+      description: ICE BofA Single-A US Corporate Index OAS
+    - label: BBB
+      fred_series: BAMLC0A4CBBB
+      friendly_name: oas_bbb
+      description: ICE BofA BBB US Corporate Index OAS
+
+  total_return_indices:
+    - label: IG Composite
+      fred_series: BAMLCC0A0CMTRIV
+      friendly_name: tr_ig
+      description: ICE BofA US Corporate Index Total Return
+      used_for: Momentum signal for AAA, AA, A buckets
+    - label: BBB
+      fred_series: BAMLCC0A4BBBTRIV
+      friendly_name: tr_bbb
+      description: ICE BofA BBB US Corporate Index Total Return
+      used_for: Momentum signal for BBB bucket
+    - label: High Yield
+      fred_series: BAMLHYH0A0HYM2TRIV
+      friendly_name: tr_hy
+      description: ICE BofA US High Yield Index Total Return
+      used_for: Not currently used; available for universe extension
+
+  data_frequency: Monthly (month-end resampled from daily FRED data)
+  data_start: 1997-01-01
+  data_source: FRED (Federal Reserve Economic Data)
+  oas_units: Percentage points (e.g., 0.82 = 82 basis points)
+
+  effective_durations:
+    description: |
+      Approximate effective duration for each rating bucket, used in
+      the return approximation and DTS factor computation.  Sourced
+      from ICE BofA index analytics, updated periodically.
+    values:
+      AAA: 8.5 years
+      AA:  7.5 years
+      A:   7.2 years
+      BBB: 6.5 years
+    config_key: universe.durations
+    note: |
+      These are approximate and should be reviewed at least annually.
+      Effective duration varies with the interest rate environment and
+      the composition of the underlying index.
+
+  benchmark_weights:
+    description: |
+      Market-capitalisation weights of each rating tier within the
+      ICE BofA US Corporate Index.  Used as the neutral benchmark
+      allocation.
+    values:
+      AAA:  4%
+      AA:  12%
+      A:   34%
+      BBB: 50%
+    config_key: universe.market_weights
+    source: ICE BofA index methodology, approximate as of 2024
+    note: |
+      BBB dominates due to the growth of BBB-rated issuance since 2010.
+      Weights should be reviewed annually against actual index composition.
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 2. FACTOR DEFINITIONS
+# ─────────────────────────────────────────────────────────────────────
+
+factor_definitions:
+
+  overview: |
+    The strategy uses three credit-specific factors derived from the
+    academic literature on credit factor investing, particularly:
+
+      - Cherief, Ben Slimane, Dumas & Fredj (2022), "Credit Factor
+        Investing with Machine Learning techniques", Amundi Institute.
+      - Ben Slimane, De Jong &";"; (2020), "Factor Investing in
+        Fixed Income — Cross-Sectional and Time-Series Momentum in
+        Corporate Bond Returns".
+      - Israel, Palhares & Richardson (2018), "Common factors in
+        corporate bond returns", Journal of Investment Management.
+
+    All signals are computed cross-sectionally across the four rating
+    buckets at each monthly rebalance date.  Z-scores are used to
+    normalise signals to zero mean and unit variance.
+
+  factors:
+
+    - name: DTS (Duration-Times-Spread)
+      z_score_label: z_dts
+      config_weight_key: factors.weights.z_dts
+      default_weight: 0.50
+
+      definition: |
+        DTS_i(t) = D_i × OAS_i(t)
+
+        where D_i is the effective duration of bucket i and OAS_i(t) is
+        the option-adjusted spread in percentage points at time t.
+
+      z_score_formula: |
+        z_dts_i(t) = [ DTS_i(t) - mean(DTS(t)) ] / std(DTS(t))
+
+        The mean and standard deviation are computed cross-sectionally
+        across the four rating buckets at each rebalance date.
+
+      rationale: |
+        DTS measures a bond's sensitivity to proportional spread
+        movements.  The Amundi paper shows DTS explains approximately
+        60% of cross-sectional variation in credit excess returns,
+        making it the single most important credit risk factor.
+
+        Unlike duration alone (which measures interest rate sensitivity)
+        or spread alone (which ignores duration), DTS captures the
+        interaction: a long-duration bond with a wide spread has
+        disproportionately more credit risk than either dimension
+        suggests independently.
+
+        Higher DTS indicates greater spread risk compensation, and
+        the factor tilts toward buckets offering more spread income
+        per unit of duration.
+
+      sign_convention: Higher DTS → higher z_dts → overweight
+      data_inputs: [OAS per bucket (FRED), effective duration per bucket (config)]
+
+    - name: Value (Excess Log Spread)
+      z_score_label: z_value
+      config_weight_key: factors.weights.z_value
+      default_weight: 0.25
+
+      definition: |
+        Value_i(t) = log( OAS_i(t) )
+
+        The log transformation is standard in credit analysis because
+        spread distributions are right-skewed and log-spreads are
+        approximately normally distributed.
+
+      z_score_formula: |
+        z_value_i(t) = [ log(OAS_i(t)) - mean(log(OAS(t))) ] / std(log(OAS(t)))
+
+        Cross-sectional z-score of log-OAS across the four rating buckets.
+
+      rationale: |
+        The value factor identifies rating buckets that are relatively
+        cheap (wide spread) or expensive (tight spread) compared to
+        their peers at each point in time.
+
+        This follows the Amundi paper's definition of credit value as
+        "excess log spread over peers."  When BBB spreads are unusually
+        wide relative to A and AA spreads (after log transformation),
+        the value signal for BBB is positive, indicating the bucket is
+        cheap and the strategy should overweight it.
+
+        The value factor captures mean reversion in relative spread
+        levels: buckets that have widened disproportionately tend to
+        tighten subsequently, and vice versa.
+
+      sign_convention: Higher log(OAS) vs peers → higher z_value → overweight
+      data_inputs: [OAS per bucket (FRED)]
+
+    - name: Momentum (Trailing Total Return)
+      z_score_label: z_momentum
+      config_weight_key: factors.weights.z_momentum
+      default_weight: 0.25
+
+      definition: |
+        Mom_i(t) = TR_i(t) / TR_i(t-k) - 1
+
+        where TR_i is the total return index for bucket i and k is the
+        lookback window in months.
+
+      z_score_formula: |
+        z_momentum_i(t) = [ Mom_i(t) - mean(Mom(t)) ] / std(Mom(t))
+
+        Cross-sectional z-score of trailing k-month cumulative excess
+        returns across the four rating buckets.
+
+      lookback_window:
+        default: 6 months
+        config_key: factors.momentum_window
+        note: |
+          6 months is standard in the credit momentum literature.
+          Shorter windows (3 months) capture faster mean reversion;
+          longer windows (12 months) capture persistent trends.
+
+      rationale: |
+        The momentum factor captures persistence in credit market
+        returns.  Buckets that have outperformed over the trailing
+        period tend to continue outperforming in the near term.
+
+        In credit markets, momentum reflects gradual spread
+        compression or decompression as fundamentals evolve.  Unlike
+        equity momentum (which is primarily driven by price trends),
+        credit momentum also captures the carry advantage of
+        higher-spread buckets during benign environments.
+
+      sign_convention: Higher trailing return → higher z_momentum → overweight
+      data_inputs: [Total return indices (FRED)]
+
+      data_limitation: |
+        The FRED data provides only three total return series:
+        tr_ig (composite IG), tr_bbb, and tr_hy.  The AAA, AA, and A
+        buckets all use tr_ig as a proxy.  This means the momentum
+        signal has limited ability to differentiate between AAA, AA,
+        and A — it primarily distinguishes BBB momentum from the
+        IG composite.
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 3. COMPOSITE SIGNAL CONSTRUCTION
+# ─────────────────────────────────────────────────────────────────────
+
+composite_signal:
+
+  formula: |
+    z_composite_i(t) = w_dts × z_dts_i(t)
+                     + w_value × z_value_i(t)
+                     + w_momentum × z_momentum_i(t)
+
+    The composite is then normalised by the sum of the absolute
+    weights actually applied (in case a signal is unavailable for a
+    given month, e.g., momentum requires k months of history).
+
+  default_weights:
+    z_dts: 0.50
+    z_value: 0.25
+    z_momentum: 0.25
+    config_key: factors.weights
+
+  weight_rationale: |
+    The DTS factor receives the highest weight (50%) based on the
+    Amundi (2022) finding that DTS explains approximately 60% of
+    cross-sectional credit return variation.  Value and Momentum
+    each receive 25%, reflecting their complementary roles as
+    mean-reversion and trend-following signals respectively.
+
+    These weights are configurable in config.yaml and should be
+    subject to periodic review and potential optimisation.
+
+  look_ahead_bias_controls: |
+    All signals are computed using only information available at or
+    before the rebalance date:
+      - DTS uses OAS at month-end t
+      - Value uses OAS at month-end t
+      - Momentum uses total returns from t-k through t
+    No future data is used in signal construction.
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 4. PORTFOLIO CONSTRUCTION
+# ─────────────────────────────────────────────────────────────────────
+
+portfolio_construction:
+
+  approach: Signal-tilted benchmark overlay
+
+  formula: |
+    w_i(t+1) = w_benchmark_i + tilt_strength × z_composite_i(t) / Σ_j |z_composite_j(t)|
+
+    The portfolio weights are the benchmark weights adjusted by a
+    signal-proportional tilt.  The normalisation by the sum of
+    absolute composite scores ensures the total tilt budget equals
+    tilt_strength regardless of signal magnitude.
+
+  post_processing:
+    - step: Floor at minimum weight
+      rule: w_i = max(w_i, min_weight)
+      default_min_weight: 0.01
+      config_key: backtest.min_weight
+      rationale: Prevents any bucket from having zero allocation
+
+    - step: Renormalise to sum to 1
+      rule: w_i = w_i / Σ_j w_j
+      rationale: Ensures fully invested portfolio
+
+  tilt_strength:
+    default: 0.10
+    config_key: backtest.tilt_strength
+    description: |
+      Maximum total weight deviation from benchmark.  A tilt_strength
+      of 0.10 means the strategy can deviate by at most 10 percentage
+      points (aggregate across all buckets) from benchmark weights.
+
+      Higher values allow the signals to express more aggressively.
+      Lower values keep the strategy closer to the benchmark.
+
+  constraints:
+    - Fully invested (weights sum to 1)
+    - Long-only (all weights >= min_weight)
+    - No leverage
+    - No shorting
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 5. RETURN COMPUTATION
+# ─────────────────────────────────────────────────────────────────────
+
+return_computation:
+
+  excess_return_approximation:
+    description: |
+      Monthly excess return per rating bucket is estimated using the
+      standard spread-duration approximation, widely used in index
+      analytics by Barclays, JP Morgan, and ICE.
+
+    formula: |
+      r_i(t) = carry_i(t) + price_return_i(t)
+
+      carry_i(t)        = OAS_i(t) / 12
+      price_return_i(t)  = -D_i × [OAS_i(t+1) - OAS_i(t)]
+
+    where:
+      - OAS_i(t) is the option-adjusted spread in decimal
+        (FRED reports in %, so 0.82% = 0.0082 in decimal)
+      - D_i is the effective duration in years
+      - The carry component represents the monthly income from
+        the spread
+      - The price return captures the capital gain/loss from
+        spread movements, approximated using modified duration
+
+    units: Decimal (0.01 = 1% = 100bp monthly return)
+
+    limitations: |
+      1. The spread-duration approximation is first-order (linear).
+         It ignores convexity, which matters most during large spread
+         moves (e.g., the GFC).  During crisis periods, actual returns
+         may diverge from this approximation.
+
+      2. The OAS values from FRED are index-level aggregates, not
+         individual bond prices.  Index-level OAS changes incorporate
+         composition effects (new issuance, maturities, fallen angels)
+         that are not pure spread movements.
+
+      3. Effective duration is treated as constant within each bucket.
+         In reality it varies over time with the interest rate
+         environment and index composition.
+
+  portfolio_return:
+    formula: |
+      R_portfolio(t) = Σ_i w_i(t) × r_i(t) - TC(t)
+
+      where TC(t) is the transaction cost incurred at rebalance.
+
+  transaction_costs:
+    model: Proportional to turnover
+    formula: |
+      TC(t) = (Σ_i |w_i(t) - w_i(t-1)|) / 2 × tc_bps / 10000
+
+      One-way turnover (half the sum of absolute weight changes)
+      multiplied by the per-unit transaction cost.
+
+    default_cost: 5.0 basis points one-way
+    config_key: backtest.transaction_cost_bps
+    note: |
+      5bp one-way is a reasonable estimate for institutional IG
+      credit trading.  Actual costs vary by:
+        - Bond liquidity (on-the-run vs off-the-run)
+        - Trade size
+        - Market conditions (wider in stress)
+        - Execution venue (electronic vs voice)
+      This is an index-level backtest so we use a single flat cost.
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 6. REBALANCING
+# ─────────────────────────────────────────────────────────────────────
+
+rebalancing:
+  frequency: Monthly
+  timing: |
+    Signals are computed at month-end t using data available through
+    month-end t.  Weights are applied for month t+1.  Returns are
+    measured over month t+1.  This introduces a one-day implementation
+    lag which is realistic for institutional rebalancing.
+
+  sequence:
+    - step: 1
+      action: Observe month-end OAS and total return indices
+    - step: 2
+      action: Compute DTS, Value, and Momentum signals
+    - step: 3
+      action: Compute composite signal and target weights
+    - step: 4
+      action: Compute turnover and transaction costs
+    - step: 5
+      action: Hold portfolio for one month
+    - step: 6
+      action: Measure realised return using next month's OAS change
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 7. BENCHMARK
+# ─────────────────────────────────────────────────────────────────────
+
+benchmark:
+  name: Market-Weighted IG Composite
+  description: |
+    The benchmark holds the four rating buckets at fixed market-
+    capitalisation weights: AAA 4%, AA 12%, A 34%, BBB 50%.
+    These weights are constant through time (not rebalanced to
+    actual market cap).
+
+    The benchmark return is:
+      R_benchmark(t) = Σ_i w_benchmark_i × r_i(t)
+
+    No transaction costs are applied to the benchmark.
+
+  config_key: universe.market_weights
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 8. PERFORMANCE METRICS
+# ─────────────────────────────────────────────────────────────────────
+
+performance_metrics:
+
+  - name: Annualised Return
+    formula: (Π_t (1 + R_t))^(12/n) - 1
+    description: Geometric annualised return over the backtest period
+
+  - name: Annualised Volatility
+    formula: std(R_monthly) × sqrt(12)
+    description: Annualised standard deviation of monthly returns
+
+  - name: Sharpe Ratio
+    formula: Annualised Return / Annualised Volatility
+    description: |
+      Return per unit of risk.  Computed against zero (i.e., these
+      are already excess returns over Treasuries, so the risk-free
+      rate is implicitly subtracted via the OAS-based return
+      computation).
+
+  - name: Maximum Drawdown
+    formula: min_t [ (cumulative_t - peak_t) / peak_t ]
+    description: Largest peak-to-trough decline in cumulative return
+
+  - name: Annualised Alpha
+    formula: Ann_Return_Strategy - Ann_Return_Benchmark
+    description: Excess annualised return over the benchmark
+
+  - name: Tracking Error
+    formula: std(R_strategy - R_benchmark) × sqrt(12)
+    description: Annualised standard deviation of excess returns
+
+  - name: Information Ratio
+    formula: Annualised Alpha / Tracking Error
+    description: |
+      Alpha per unit of active risk.  An IR above 0.5 is generally
+      considered good for a systematic strategy; above 1.0 is
+      exceptional.
+
+  - name: t-Statistic on Alpha
+    formula: mean(excess_monthly) / (std(excess_monthly) / sqrt(n))
+    description: |
+      Statistical significance of the average monthly excess return.
+      Values above 1.96 indicate significance at the 95% confidence
+      level.  Values above 2.58 indicate significance at 99%.
+
+  - name: Hit Rate
+    formula: count(excess > 0) / n
+    description: |
+      Fraction of months where the strategy outperforms the benchmark.
+      A hit rate above 50% combined with positive alpha indicates
+      consistent (not concentrated) outperformance.
+
+  - name: Average Monthly Turnover
+    formula: mean_t [ Σ_i |w_i(t) - w_i(t-1)| / 2 ]
+    description: |
+      Average one-way turnover per month.  Lower turnover reduces
+      transaction cost drag and improves net-of-cost performance.
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 9. BACKTEST METHODOLOGY
+# ─────────────────────────────────────────────────────────────────────
+
+backtest_methodology:
+
+  period: 1997-09 to 2026-03 (343 months, ~28.5 years)
+  data_source: FRED daily data, resampled to month-end
+  out_of_sample: |
+    This is a full-sample backtest.  No in-sample/out-of-sample split
+    is applied because the strategy has no fitted parameters — factor
+    weights are fixed a priori based on the academic literature.
+
+    However, the factor weight allocation (50/25/25) should be treated
+    as a researcher degree of freedom and subjected to robustness
+    checks (see section 10).
+
+  survivorship_bias: |
+    The ICE BofA indices are reconstituted monthly and include all
+    eligible bonds at each point in time, including bonds that
+    subsequently defaulted or were downgraded.  This mitigates
+    survivorship bias at the index level.
+
+    However, the FRED OAS series are index aggregates — they do not
+    capture the dispersion of outcomes within a rating bucket (e.g.,
+    the worst BBB bonds that were downgraded to HY).
+
+  look_ahead_bias: |
+    Signals use only data available at or before the rebalance date.
+    The momentum signal requires k months of prior return history;
+    the first k months of the sample are excluded from the backtest
+    (burn-in period).
+
+  transaction_cost_assumptions: |
+    A flat 5bp one-way cost is applied to all turnover.  This is
+    conservative for large, liquid IG bonds but may understate costs
+    for less liquid segments (long-dated, lower-rated).
+
+  known_limitations:
+    - Only 4 assets (rating buckets) — limits cross-sectional signal dispersion
+    - Duration treated as constant per bucket (ignores time variation)
+    - Return approximation is first-order (ignores convexity)
+    - Momentum signal uses IG composite return as proxy for AAA/AA/A
+    - No default risk modelling (OAS includes default premium)
+    - Benchmark weights are fixed, not time-varying market cap
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 10. ROBUSTNESS AND SENSITIVITY
+# ─────────────────────────────────────────────────────────────────────
+
+robustness:
+
+  recommended_tests:
+    - name: Factor weight sensitivity
+      description: |
+        Vary DTS/Value/Momentum weights across a grid
+        (e.g., DTS from 0.2 to 0.8 in steps of 0.1) and report
+        the resulting alpha, IR, and t-stat for each combination.
+
+    - name: Tilt strength sensitivity
+      description: |
+        Vary tilt_strength from 0.05 to 0.50 and report the
+        alpha and tracking error trade-off.
+
+    - name: Momentum window sensitivity
+      description: |
+        Test momentum lookback of 3, 6, 9, and 12 months.
+
+    - name: Sub-period analysis
+      description: |
+        Report performance separately for:
+        - Pre-GFC (1997-2007)
+        - GFC (2007-2009)
+        - Post-GFC (2009-2019)
+        - COVID and after (2020-present)
+
+    - name: Transaction cost sensitivity
+      description: |
+        Test costs of 0, 2, 5, 10, and 20bp one-way.
+
+    - name: Single-factor backtests
+      description: |
+        Run the backtest using each factor individually (100% weight)
+        to isolate the contribution of each signal.
+
+    - name: Excluding crisis periods
+      description: |
+        Report performance excluding 2008-2009 and March-April 2020
+        to test whether alpha is crisis-dependent.
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 11. POTENTIAL EXTENSIONS
+# ─────────────────────────────────────────────────────────────────────
+
+extensions:
+
+  - name: Add High Yield bucket
+    description: |
+      The FRED data includes oas_hy and tr_hy.  Adding HY as a 5th
+      asset would dramatically increase signal dispersion (HY OAS is
+      3-5x IG) and provide a much wider DTS range.
+    data_available: true
+    impact: High — expected to significantly improve alpha
+
+  - name: Duration bucket rotation
+    description: |
+      The FRED data includes 6 duration-bucketed OAS series
+      (1-3yr through 15yr+).  A parallel duration rotation strategy
+      could be overlaid on the rating rotation.
+    data_available: true
+    impact: Medium — adds a second signal dimension
+
+  - name: Regime-conditional factor weights
+    description: |
+      Use the HMM regime detector to vary factor weights by market
+      regime.  E.g., increase DTS weight in compression (carry
+      environment), increase momentum weight in stress (trend
+      following during sell-offs).
+    data_available: true
+    impact: Medium — requires careful out-of-sample validation
+
+  - name: Bond-level implementation
+    description: |
+      With bond-level data (ICE BofAML, Bloomberg, or TRACE), the
+      strategy could be implemented at the individual security level,
+      using the same three factors but computed bond-by-bond.
+    data_available: false
+    impact: High — full factor model as in the Amundi paper
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 12. REFERENCES
+# ─────────────────────────────────────────────────────────────────────
+
+references:
+  - authors: Cherief, A., Ben Slimane, M., Dumas, J.-M., Fredj, A.
+    year: 2022
+    title: "Credit Factor Investing with Machine Learning techniques"
+    source: Amundi Institute Working Paper
+    relevance: Primary reference for 7-factor credit model; DTS as dominant factor
+
+  - authors: Israel, R., Palhares, D., Richardson, S.
+    year: 2018
+    title: "Common factors in corporate bond returns"
+    source: Journal of Investment Management, 16(2)
+    relevance: Establishes carry, defensive, momentum, and value as credit factors
+
+  - authors: Houweling, P., Van Zundert, J.
+    year: 2017
+    title: "Factor Investing in the Corporate Bond Market"
+    source: Financial Analysts Journal, 73(2)
+    relevance: Factor investing framework for corporate bonds
+
+  - authors: Ben Slimane, M., De Jong, M.
+    year: 2020
+    title: "Factor Investing in Fixed Income"
+    source: Amundi Institute
+    relevance: Cross-sectional and time-series momentum in credit
+
+  - authors: Bai, J., Bali, T.G., Wen, Q.
+    year: 2019
+    title: "Common risk factors in the cross-section of corporate bond returns"
+    source: Journal of Financial Economics, 131(3)
+    relevance: Downside risk, credit risk, and liquidity as priced factors
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 13. CONFIGURATION REFERENCE
+# ─────────────────────────────────────────────────────────────────────
+
+configuration_reference:
+  description: |
+    All parameters below are defined in config.yaml and read at
+    runtime.  To change any parameter, edit config.yaml — no code
+    changes required.
+
+  parameters:
+    - key: universe.durations
+      type: dict
+      description: Effective duration per rating bucket (years)
+      current_value: "{AAA: 8.5, AA: 7.5, A: 7.2, BBB: 6.5}"
+
+    - key: universe.market_weights
+      type: dict
+      description: Benchmark market-cap weights per rating bucket
+      current_value: "{AAA: 0.04, AA: 0.12, A: 0.34, BBB: 0.50}"
+
+    - key: factors.weights
+      type: dict
+      description: Factor weights for composite signal
+      current_value: "{z_dts: 0.50, z_value: 0.25, z_momentum: 0.25}"
+
+    - key: factors.momentum_window
+      type: integer
+      description: Momentum lookback period in months
+      current_value: 6
+
+    - key: backtest.tilt_strength
+      type: float
+      description: Maximum aggregate weight deviation from benchmark
+      current_value: 0.10
+
+    - key: backtest.transaction_cost_bps
+      type: float
+      description: One-way transaction cost in basis points
+      current_value: 5.0
+
+    - key: backtest.min_weight
+      type: float
+      description: Minimum allocation per bucket
+      current_value: 0.01
+
+    - key: backtest.rolling_sharpe_window
+      type: integer
+      description: Window for rolling Sharpe ratio chart (months)
+      current_value: 36

@@ -1,0 +1,21 @@
+Metadata-Version: 2.4
+Name: credit-portfolio
+Version: 1.0.0
+Summary: Three-layer systematic credit portfolio construction: HMM regime detection, Black-Litterman, CVXPY optimization
+Requires-Python: >=3.10
+Requires-Dist: cvxpy>=1.4
+Requires-Dist: numpy>=1.24
+Requires-Dist: pandas>=2.0
+Requires-Dist: matplotlib>=3.7
+Requires-Dist: requests>=2.28
+Requires-Dist: anthropic>=0.25
+Requires-Dist: hmmlearn>=0.3
+Requires-Dist: prophet>=1.1
+Requires-Dist: pandas-datareader>=0.10
+Requires-Dist: scipy>=1.10
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: scikit-learn>=1.3
+Requires-Dist: shap>=0.43
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0; extra == "dev"

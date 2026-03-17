@@ -1,0 +1,176 @@
+# ═══════════════════════════════════════════════════════════════════
+# Credit Factor Portfolio System — Master Configuration
+# ═══════════════════════════════════════════════════════════════════
+# Every tunable parameter lives here. No hardcoded numbers in code.
+# Override any value via environment variables (see config.py).
+
+# ── Paths ──────────────────────────────────────────────────────────
+paths:
+  csv: data/fred_credit_spreads.csv
+  output: output
+
+# ── Data Loading ───────────────────────────────────────────────────
+data:
+  freq: ME                    # ME = month-end, D = daily
+  start: "1997-01-01"        # drop observations before this date
+
+# ── Investment Universe ────────────────────────────────────────────
+universe:
+  ratings: [AAA, AA, A, BBB]
+  duration_buckets: ["1-3yr", "3-7yr", "7-10yr", "10yr+"]
+  sectors:
+    - Financials
+    - Healthcare
+    - Technology
+    - Energy
+    - Industrials
+    - Consumer Staples
+    - Utilities
+    - Materials
+
+  # Effective duration per rating bucket (years)
+  # Source: ICE BofA index methodology, approximate as of 2024
+  durations:
+    AAA: 8.5
+    AA:  7.5
+    A:   7.2
+    BBB: 6.5
+    HY:  4.5
+
+  # Effective duration per maturity bucket (years)
+  # Midpoint of the bucket range
+  duration_bucket_midpoints:
+    "1-3yr":  2.0
+    "3-7yr":  5.0
+    "7-10yr": 8.5
+    "10yr+":  12.5
+
+  # Market-cap weights within IG universe
+  # Source: ICE BofA US Corporate Index composition, approximate
+  market_weights:
+    AAA: 0.04
+    AA:  0.12
+    A:   0.34
+    BBB: 0.50
+
+  # FRED column mappings
+  rating_oas_col:
+    AAA: oas_aaa
+    AA:  oas_aa
+    A:   oas_a
+    BBB: oas_bbb
+
+  duration_bucket_oas_col:
+    "1-3yr":  oas_1_3y
+    "3-7yr":  oas_3_5y
+    "7-10yr": oas_7_10y
+    "10yr+":  oas_10_15y
+
+  momentum_tr_col:
+    AAA: tr_ig     # best available proxy (no AAA-specific return index)
+    AA:  tr_ig
+    A:   tr_ig
+    BBB: tr_bbb
+
+  # Synthetic bond generation
+  n_bonds: 60
+  seed: 42
+  rating_probs: [0.05, 0.15, 0.40, 0.40]
+  duration_bucket_probs: [0.20, 0.35, 0.30, 0.15]
+  rating_base_spread_bp:
+    AAA: 30
+    AA:  50
+    A:   80
+    BBB: 140
+  duration_spread_add_bp:
+    "1-3yr":  0
+    "3-7yr":  20
+    "7-10yr": 35
+    "10yr+":  55
+
+# ── Credit Factors ─────────────────────────────────────────────────
+factors:
+  # Weights for composite score
+  # DTS dominates per Amundi (2022) — ~60% of cross-sectional credit risk
+  weights:
+    z_dts:      0.50
+    z_value:    0.25
+    z_momentum: 0.25
+
+  # Momentum lookback (months)
+  momentum_window: 6
+
+# ── Backtest ───────────────────────────────────────────────────────
+backtest:
+  # Maximum weight deviation from benchmark per signal unit
+  tilt_strength: 0.10
+
+  # One-way transaction cost (basis points)
+  # Source: Typical institutional IG credit trading cost
+  transaction_cost_bps: 5.0
+
+  # Minimum allocation per bucket (prevents going to zero)
+  min_weight: 0.01
+
+  # Rolling window for performance metrics (months)
+  rolling_sharpe_window: 36
+
+# ── HMM Regime Detection ──────────────────────────────────────────
+hmm:
+  n_states: 3
+  n_iter: 300
+  random_state: 42
+
+# ── Black-Litterman ───────────────────────────────────────────────
+bl:
+  tau_by_regime:
+    COMPRESSION: 0.010
+    NORMAL:      0.025
+    STRESS:      0.075
+  lambda_risk_aversion: 2.5
+  delta: 1.5
+  tau: 0.003
+  omega_scale:
+    COMPRESSION: 0.5
+    NORMAL:      1.0
+    STRESS:      3.0
+  gamma_factor: 0.3         # weight on factor alpha vs BL bucket return
+  within_bucket_corr: 0.3   # assumed intra-bucket correlation
+
+# ── Portfolio Optimizer ───────────────────────────────────────────
+optimizer:
+  max_sector_dev: 0.05      # max over/underweight vs benchmark per sector
+  max_dur_dev: 0.03         # max over/underweight vs benchmark per duration bucket
+  max_turnover: 0.20        # max one-way turnover per rebalance
+  max_single_name: 0.04     # max weight per individual bond
+  quality_floor: 35.0       # minimum quality score for inclusion
+
+# ── Risk Parity ───────────────────────────────────────────────────
+risk_parity:
+  max_single_name: 0.05
+  max_sector_dev: 0.08
+  factor_blend: 0.0
+
+# ── Covariance Estimation ────────────────────────────────────────
+covariance:
+  window: 60                # months of return data
+  min_periods: 36
+
+# ── Prophet Forecasting ──────────────────────────────────────────
+prophet:
+  horizon_months: 3
+  interval_width: 0.80
+  changepoint_prior_scale: 0.15
+  seasonality_prior_scale: 5.0
+  mcmc_iter: 500
+  min_months: 24
+
+# ── LLM Commentary ───────────────────────────────────────────────
+llm:
+  model: claude-sonnet-4-5
+  max_tokens: 400
+
+# ── Logging ──────────────────────────────────────────────────────
+logging:
+  level: INFO
+  format: "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
