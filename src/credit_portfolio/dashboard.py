@@ -118,7 +118,10 @@ with st.sidebar:
     st.divider()
     run_btn = st.button("Run Analysis", type="primary", use_container_width=True)
 
-# No auto-run — user clicks "Run Analysis" to start
+# Auto-run on first load so dashboard is populated on visit
+if "auto_ran" not in st.session_state:
+    st.session_state["auto_ran"] = True
+    run_btn = True
 
 
 # ══════════════════════════════════════════════════════════════════
