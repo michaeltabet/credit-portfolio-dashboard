@@ -709,155 +709,143 @@ def process_code_cell(doc, cell, tmp_dir):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  BUILD COVER PAGE (with abstract — no wasted space)
-# ═══════════════════════════════════════════════════════════════
-
-for _ in range(3):
-    p = doc.add_paragraph()
-    p.paragraph_format.space_after = Pt(0)
-
-# Title
-p = doc.add_paragraph()
-p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = p.add_run("Regime-Conditional Credit Factor Rotation")
-run.font.name = 'Georgia'
-run.font.size = Pt(24)
-run.font.color.rgb = NAVY
-run.bold = True
-p.paragraph_format.space_after = Pt(4)
-
-p = doc.add_paragraph()
-p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = p.add_run("A Bayesian Framework for Investment-Grade Rating-Tier Allocation")
-run.font.name = 'Georgia'
-run.font.size = Pt(16)
-run.font.color.rgb = DENIM
-p.paragraph_format.space_after = Pt(14)
-
-# Rule
-p = doc.add_paragraph()
-p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = p.add_run("\u2501" * 30)
-run.font.color.rgb = NAVY
-run.font.size = Pt(8)
-p.paragraph_format.space_after = Pt(12)
-
-# Author + date
-p = doc.add_paragraph()
-p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = p.add_run("Michael Tabet, CFA")
-run.font.name = 'Arial'
-run.font.size = Pt(13)
-run.font.color.rgb = CHARCOAL
-run.bold = True
-p.paragraph_format.space_after = Pt(2)
-
-p = doc.add_paragraph()
-p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = p.add_run("Working Paper  |  March 2026")
-run.font.name = 'Arial'
-run.font.size = Pt(10)
-run.font.color.rgb = CHARCOAL
-run.italic = True
-p.paragraph_format.space_after = Pt(16)
-
-# Abstract on cover (framed box)
-def add_framed_box(doc, title, body_text, title_size=Pt(11), body_size=Pt(10),
-                   border_color="1B2A4A", bg_color="F5F5F5"):
-    """Add a framed box with title and body text."""
-    p = doc.add_paragraph()
-    pPr = p._p.get_or_add_pPr()
-    pBdr = parse_xml(
-        f'<w:pBdr {nsdecls("w")}>'
-        f'  <w:top w:val="single" w:sz="6" w:space="4" w:color="{border_color}"/>'
-        f'  <w:bottom w:val="single" w:sz="6" w:space="4" w:color="{border_color}"/>'
-        f'  <w:left w:val="single" w:sz="6" w:space="8" w:color="{border_color}"/>'
-        f'  <w:right w:val="single" w:sz="6" w:space="8" w:color="{border_color}"/>'
-        f'</w:pBdr>'
-    )
-    pPr.append(pBdr)
-    shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{bg_color}" w:val="clear"/>')
-    pPr.append(shading)
-    p.paragraph_format.left_indent = Inches(0.15)
-    p.paragraph_format.right_indent = Inches(0.15)
-    p.paragraph_format.space_before = Pt(6)
-    p.paragraph_format.space_after = Pt(6)
-    p.paragraph_format.line_spacing = 1.15
-    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-
-    run = p.add_run(f"{title}\n")
-    run.font.name = 'Arial'
-    run.font.size = title_size
-    run.font.color.rgb = NAVY
-    run.bold = True
-
-    run = p.add_run(body_text)
-    run.font.name = 'Arial'
-    run.font.size = body_size
-    run.font.color.rgb = CHARCOAL
-    return p
-
-abstract_text = (
-    "This paper tests whether systematic rotation across investment-grade rating tiers "
-    "(AAA, AA, A, BBB) generates excess returns over a market-cap-weighted benchmark when "
-    "conditioned on credit market regimes. A three-layer Bayesian pipeline combines "
-    "Hidden Markov Model regime detection, Prophet-based spread forecasting, and "
-    "Black-Litterman portfolio construction with credit factor signals (DTS, value, "
-    "momentum). The framework uses only publicly available FRED OAS data and is fully "
-    "replicable. Backtested over 25+ years of monthly data with stress testing and "
-    "Monte Carlo simulation."
-)
-add_framed_box(doc, "Abstract", abstract_text)
-
-# Keywords + JEL (inside abstract frame area)
-p = doc.add_paragraph()
-p.paragraph_format.space_after = Pt(2)
-p.paragraph_format.left_indent = Inches(0.15)
-run = p.add_run("Keywords: ")
-run.font.bold = True
-run.font.color.rgb = NAVY
-run.font.size = Pt(9)
-run.font.name = 'Arial'
-run = p.add_run(
-    "credit factors, regime switching, Black-Litterman, HMM, "
-    "investment-grade bonds, OAS, portfolio construction"
-)
-run.font.size = Pt(9)
-run.font.color.rgb = CHARCOAL
-run.font.name = 'Arial'
-run = p.add_run("   |   JEL: ")
-run.font.bold = True
-run.font.color.rgb = NAVY
-run.font.size = Pt(9)
-run.font.name = 'Arial'
-run = p.add_run("G11, G12, C58")
-run.font.size = Pt(9)
-run.font.color.rgb = CHARCOAL
-run.font.name = 'Arial'
-
-# Author bio on cover (framed box)
-bio = (
-    "Michael Tabet, CFA is a quantitative finance professional advising and managing "
-    "capital for five family offices. He previously worked in multi-asset investment "
-    "solutions for a Canadian asset owner, structuring allocation frameworks for "
-    "institutional clients including pension funds and sovereign-adjacent entities. "
-    "He began his career as a trader in Beirut. Michael holds the CFA Charter, an MBA, "
-    "and an MSc in Econometrics from Saint Joseph University, with thesis research on "
-    "rule-based investment strategies."
-)
-add_framed_box(doc, "About the Author", bio, title_size=Pt(10), body_size=Pt(9),
-               border_color="3D5A80", bg_color="FAFAFA")
-
-doc.add_page_break()
-
-# ═══════════════════════════════════════════════════════════════
-#  BUILD EXECUTIVE SUMMARY (graph-driven, equity research style)
+#  BUILD COVER PAGE (professional firm publication style)
 # ═══════════════════════════════════════════════════════════════
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import numpy as np
+
+def create_cover_image(path):
+    """Create a professional cover page graphic with gradient header."""
+    fig, ax = plt.subplots(figsize=(8.5, 11))
+    ax.set_xlim(0, 8.5)
+    ax.set_ylim(0, 11)
+    ax.axis('off')
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+    # ── Gradient header band (top 3.8 inches) ──
+    gradient = np.linspace(0, 1, 256).reshape(1, -1)
+    gradient = np.vstack([gradient] * 10)
+    from matplotlib.colors import LinearSegmentedColormap
+    navy_cmap = LinearSegmentedColormap.from_list('navy_grad',
+        ['#0D1B2A', '#1B2A4A', '#2B4570', '#3D5A80'])
+    ax.imshow(gradient, aspect='auto', cmap=navy_cmap,
+              extent=[0, 8.5, 7.2, 11], zorder=1)
+
+    # Subtle geometric accent lines on gradient
+    for y_pos in [10.2, 9.8, 7.6]:
+        ax.plot([0.8, 7.7], [y_pos, y_pos], color='white', alpha=0.08, linewidth=0.5, zorder=2)
+
+    # Title on gradient
+    ax.text(4.25, 9.6, 'REGIME-CONDITIONAL', ha='center', va='center',
+            fontsize=28, fontweight='bold', color='white', fontfamily='Arial',
+            zorder=3)
+    ax.text(4.25, 8.9, 'CREDIT FACTOR ROTATION', ha='center', va='center',
+            fontsize=28, fontweight='bold', color='white', fontfamily='Arial',
+            zorder=3)
+
+    # Thin accent line
+    ax.plot([2.5, 6.0], [8.35, 8.35], color='#5B8C85', linewidth=2, zorder=3)
+
+    # Subtitle
+    ax.text(4.25, 7.85, 'A Bayesian Framework for Investment-Grade', ha='center', va='center',
+            fontsize=14, color='#98C1D9', fontfamily='Arial', zorder=3)
+    ax.text(4.25, 7.5, 'Rating-Tier Allocation', ha='center', va='center',
+            fontsize=14, color='#98C1D9', fontfamily='Arial', zorder=3)
+
+    # ── White body area ──
+    ax.add_patch(plt.Rectangle((0, 0), 8.5, 7.2, facecolor='white', zorder=1))
+
+    # Author block
+    ax.text(4.25, 6.5, 'Michael Tabet, CFA', ha='center', va='center',
+            fontsize=16, fontweight='bold', color='#1B2A4A', fontfamily='Arial', zorder=3)
+    ax.text(4.25, 6.1, 'Working Paper  \u2022  March 2026', ha='center', va='center',
+            fontsize=11, color='#3C3C3C', fontfamily='Arial', style='italic', zorder=3)
+
+    # Thin rule
+    ax.plot([2.0, 6.5], [5.7, 5.7], color='#1B2A4A', linewidth=0.8, zorder=3)
+
+    # Abstract box
+    abstract_box = mpatches.FancyBboxPatch((0.8, 3.1), 6.9, 2.4,
+        boxstyle='round,pad=0.15', facecolor='#F7F8FA', edgecolor='#1B2A4A',
+        linewidth=1.2, zorder=2)
+    ax.add_patch(abstract_box)
+
+    ax.text(1.1, 5.2, 'ABSTRACT', fontsize=9, fontweight='bold',
+            color='#1B2A4A', fontfamily='Arial', zorder=3)
+
+    abstract = (
+        "This paper tests whether systematic rotation across investment-grade rating\n"
+        "tiers (AAA, AA, A, BBB) generates excess returns over a market-cap-weighted\n"
+        "benchmark when conditioned on credit market regimes. A three-layer Bayesian\n"
+        "pipeline combines Hidden Markov Model regime detection, Prophet-based spread\n"
+        "forecasting, and Black-Litterman portfolio construction with credit factor\n"
+        "signals (DTS, value, momentum). The framework uses only publicly available\n"
+        "FRED OAS data and is fully replicable. Backtested over 25+ years of monthly\n"
+        "data with stress testing and Monte Carlo simulation."
+    )
+    ax.text(1.1, 4.95, abstract, fontsize=8.2, color='#3C3C3C',
+            fontfamily='Arial', va='top', linespacing=1.45, zorder=3)
+
+    # Keywords + JEL
+    ax.text(1.1, 3.35, 'Keywords: ', fontsize=7.5, fontweight='bold',
+            color='#1B2A4A', fontfamily='Arial', zorder=3)
+    ax.text(2.15, 3.35,
+            'credit factors, regime switching, Black-Litterman, HMM, IG bonds, OAS, portfolio construction',
+            fontsize=7.5, color='#3C3C3C', fontfamily='Arial', zorder=3)
+    ax.text(1.1, 3.1, 'JEL Classification: ', fontsize=7.5, fontweight='bold',
+            color='#1B2A4A', fontfamily='Arial', zorder=3)
+    ax.text(2.65, 3.1, 'G11, G12, C58', fontsize=7.5, color='#3C3C3C',
+            fontfamily='Arial', zorder=3)
+
+    # Author bio box
+    bio_box = mpatches.FancyBboxPatch((0.8, 0.8), 6.9, 1.9,
+        boxstyle='round,pad=0.15', facecolor='#FAFBFC', edgecolor='#3D5A80',
+        linewidth=1.0, zorder=2)
+    ax.add_patch(bio_box)
+
+    ax.text(1.1, 2.45, 'ABOUT THE AUTHOR', fontsize=9, fontweight='bold',
+            color='#3D5A80', fontfamily='Arial', zorder=3)
+
+    bio = (
+        "Michael Tabet, CFA is a quantitative finance professional advising and\n"
+        "managing capital for five family offices. He previously worked in multi-asset\n"
+        "investment solutions for a Canadian asset owner, structuring allocation\n"
+        "frameworks for institutional clients including pension funds and sovereign-\n"
+        "adjacent entities. He began his career as a trader in Beirut. Michael holds\n"
+        "the CFA Charter, an MBA, and an MSc in Econometrics from Saint Joseph\n"
+        "University, with thesis research on rule-based investment strategies."
+    )
+    ax.text(1.1, 2.2, bio, fontsize=7.8, color='#3C3C3C',
+            fontfamily='Arial', va='top', linespacing=1.4, zorder=3)
+
+    # Bottom accent bar
+    ax.add_patch(plt.Rectangle((0, 0), 8.5, 0.35, facecolor='#1B2A4A', zorder=2))
+    ax.text(4.25, 0.17, 'QUANTITATIVE RESEARCH', ha='center', va='center',
+            fontsize=8, color='white', fontfamily='Arial', zorder=3)
+
+    fig.savefig(path, dpi=250, bbox_inches='tight', pad_inches=0, facecolor='white')
+    plt.close(fig)
+
+cover_img_path = os.path.join(tmp_dir, 'cover_page.png')
+create_cover_image(cover_img_path)
+
+# Insert cover image (full page)
+p = doc.add_paragraph()
+p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+p.paragraph_format.space_before = Pt(0)
+p.paragraph_format.space_after = Pt(0)
+run = p.add_run()
+run.add_picture(cover_img_path, width=Inches(7.5))
+
+doc.add_page_break()
+
+# ═══════════════════════════════════════════════════════════════
+#  BUILD EXECUTIVE SUMMARY (graph-driven, equity research style)
+# ═══════════════════════════════════════════════════════════════
 
 # Header
 p = doc.add_paragraph()
@@ -946,76 +934,230 @@ render_exec_figure(29,
     "During compression, BBB exposure increases to capture the credit risk premium."
 )
 
-# ── Pipeline diagram ──
+# ── Full Pipeline Data Flow Diagram (detailed 6-step) ──
 
-def create_pipeline_diagram(path):
-    """Create a professional pipeline flowchart as a PNG."""
-    fig, ax = plt.subplots(1, 1, figsize=(9, 4.5))
+def create_full_pipeline(path):
+    """Create a detailed end-to-end data flow diagram matching the notebook's HTML flow."""
+    fig, ax = plt.subplots(1, 1, figsize=(9.5, 14))
     ax.set_xlim(0, 10)
-    ax.set_ylim(0, 5.5)
+    ax.set_ylim(0, 15)
     ax.axis('off')
     fig.patch.set_facecolor('white')
 
     navy = '#1B2A4A'
     denim = '#3D5A80'
     teal = '#5B8C85'
+    light_blue = '#98C1D9'
     charcoal = '#3C3C3C'
+    light_bg = '#F5F7FA'
+    gold = '#8B7E74'
 
-    def draw_box(x, y, w, h, title, items, color, bg='#F5F5F5'):
-        rect = mpatches.FancyBboxPatch((x, y), w, h, boxstyle='round,pad=0.1',
-                                        facecolor=bg, edgecolor=color, linewidth=2)
-        ax.add_patch(rect)
-        ax.text(x + w/2, y + h - 0.2, title, ha='center', va='top',
-                fontsize=8.5, fontweight='bold', color=color, fontfamily='Arial')
-        for i, item in enumerate(items):
-            ax.text(x + w/2, y + h - 0.45 - i*0.2, item, ha='center', va='top',
-                    fontsize=6.5, color=charcoal, fontfamily='Arial')
+    def rounded_box(x, y, w, h, fc, ec, lw=1.5):
+        r = mpatches.FancyBboxPatch((x, y), w, h, boxstyle='round,pad=0.12',
+                                     facecolor=fc, edgecolor=ec, linewidth=lw)
+        ax.add_patch(r)
 
-    def draw_arrow(x1, y1, x2, y2):
-        ax.annotate('', xy=(x2, y2), xytext=(x1, y1),
+    def arrow_down(x, y1, y2):
+        ax.annotate('', xy=(x, y2), xytext=(x, y1),
                     arrowprops=dict(arrowstyle='->', color=charcoal, lw=1.5))
 
-    draw_box(2.5, 4.3, 5, 0.9, 'FRED OAS TIME SERIES',
-             ['AAA | AA | A | BBB  \u2014  25+ years, monthly'],
-             navy)
+    # Title
+    ax.text(5.0, 14.7, 'How the Model Works \u2014 End-to-End Data Flow',
+            ha='center', va='center', fontsize=14, fontweight='bold',
+            color=navy, fontfamily='Arial')
+    ax.text(5.0, 14.35, 'Every arrow is a real variable. Every box is a real computation. Nothing is assumed.',
+            ha='center', va='center', fontsize=8, color=charcoal,
+            fontfamily='Arial', style='italic')
 
-    draw_arrow(4.0, 4.3, 1.8, 3.65)
-    draw_arrow(5.0, 4.3, 5.0, 3.65)
-    draw_arrow(6.0, 4.3, 8.2, 3.65)
+    # ── STEP 1: INPUT ──
+    ax.text(0.4, 13.85, '\u2460', fontsize=14, fontweight='bold', color='white',
+            bbox=dict(boxstyle='circle', facecolor=navy, edgecolor=navy), zorder=5)
+    rounded_box(1.0, 13.3, 8.5, 0.8, navy, navy, 2)
+    ax.text(1.3, 13.9, 'INPUT: FRED OAS Time Series', fontsize=11, fontweight='bold',
+            color='white', fontfamily='Arial')
+    ax.text(1.3, 13.55, 'oas_aaa    oas_aa    oas_a    oas_bbb    \u2014  25+ years, monthly',
+            fontsize=8.5, color='white', fontfamily='Arial', alpha=0.9)
 
-    draw_box(0.2, 2.5, 3.2, 1.15, 'HMM REGIME DETECTION',
-             ['OAS level + \u0394OAS (1m, 3m, 6m)', 'Compress / Normal / Stress'],
-             denim)
+    arrow_down(5.0, 13.3, 12.9)
+    ax.text(5.3, 13.05, 'feeds into 3 parallel processes', fontsize=7,
+            color=charcoal, fontfamily='Arial', style='italic')
 
-    draw_box(3.6, 2.5, 2.8, 1.15, 'PROPHET FORECASTING',
-             ['3-month OAS forecast', 'Tightening vs widening'],
-             denim)
+    # ── STEP 2: THREE PARALLEL BOXES ──
+    col_w = 2.7
+    col_gap = 0.2
+    col_h = 3.5
+    col_y = 9.2
 
-    draw_box(6.6, 2.5, 3.2, 1.15, 'CREDIT FACTOR SIGNALS',
-             ['DTS | Value | Momentum', 'Cross-sectional z-scores'],
-             denim)
+    # 2a: HMM
+    ax.text(0.4, 12.55, '2a', fontsize=9, fontweight='bold', color='white',
+            bbox=dict(boxstyle='circle', facecolor=navy, edgecolor=navy), zorder=5)
+    rounded_box(0.5, col_y, col_w, col_h, light_bg, navy, 1.5)
+    ax.plot([0.5, 0.5], [col_y, col_y + col_h], color=navy, linewidth=3, zorder=4)
+    ax.text(1.85, col_y + col_h - 0.25, 'HMM Regime Detection',
+            ha='center', fontsize=9.5, fontweight='bold', color=navy, fontfamily='Arial')
 
-    draw_arrow(1.8, 2.5, 4.0, 1.85)
-    draw_arrow(5.0, 2.5, 5.0, 1.85)
-    draw_arrow(8.2, 2.5, 6.0, 1.85)
+    # Takes in
+    rounded_box(0.65, col_y + 2.3, 2.4, 0.8, 'white', '#E0E0E0', 0.8)
+    ax.text(0.8, col_y + 2.9, 'TAKES IN:', fontsize=7, fontweight='bold', color=navy, fontfamily='Arial')
+    ax.text(0.8, col_y + 2.6, '\u2022 OAS composite level\n\u2022 \u0394OAS 1m, 3m, 6m changes',
+            fontsize=7, color=charcoal, fontfamily='Arial', linespacing=1.4)
+    # Does
+    rounded_box(0.65, col_y + 1.3, 2.4, 0.85, 'white', '#E0E0E0', 0.8)
+    ax.text(0.8, col_y + 1.95, 'DOES:', fontsize=7, fontweight='bold', color=navy, fontfamily='Arial')
+    ax.text(0.8, col_y + 1.7, '3-state Gaussian HMM via EM\n(300 iter). Viterbi path assigns\neach month to a regime.',
+            fontsize=6.5, color=charcoal, fontfamily='Arial', linespacing=1.3)
+    # Produces
+    rounded_box(0.65, col_y + 0.1, 2.4, 1.05, '#E8F0FE', '#C4D7F2', 0.8)
+    ax.text(0.8, col_y + 0.95, 'PRODUCES:', fontsize=7, fontweight='bold', color=navy, fontfamily='Arial')
+    ax.text(0.8, col_y + 0.7, 'regime = Compress/Normal/Stress\n\u03c4 = 0.010 / 0.025 / 0.075\n\u03c9 = 0.5 / 1.0 / 3.0',
+            fontsize=6.5, color=charcoal, fontfamily='Arial', linespacing=1.3)
 
-    draw_box(2.5, 0.85, 5, 1.0, 'BLACK-LITTERMAN BLENDING',
-             ['Equilibrium + views + regime \u03c4, \u03c9',
-              'Stress \u2192 defensive  |  Compression \u2192 tilt'],
-             teal)
+    # 2b: Prophet
+    col2_x = 0.5 + col_w + col_gap
+    ax.text(col2_x - 0.1, 12.55, '2b', fontsize=9, fontweight='bold', color='white',
+            bbox=dict(boxstyle='circle', facecolor=denim, edgecolor=denim), zorder=5)
+    rounded_box(col2_x, col_y, col_w, col_h, light_bg, denim, 1.5)
+    ax.plot([col2_x, col2_x], [col_y, col_y + col_h], color=denim, linewidth=3, zorder=4)
+    ax.text(col2_x + col_w/2, col_y + col_h - 0.25, 'Prophet OAS Forecasting',
+            ha='center', fontsize=9.5, fontweight='bold', color=navy, fontfamily='Arial')
 
-    draw_arrow(5.0, 0.85, 5.0, 0.3)
+    rounded_box(col2_x + 0.15, col_y + 2.3, 2.4, 0.8, 'white', '#E0E0E0', 0.8)
+    ax.text(col2_x + 0.3, col_y + 2.9, 'TAKES IN:', fontsize=7, fontweight='bold', color=denim, fontfamily='Arial')
+    ax.text(col2_x + 0.3, col_y + 2.6, '\u2022 Full OAS history per bucket\n\u2022 Each fitted separately',
+            fontsize=7, color=charcoal, fontfamily='Arial', linespacing=1.4)
 
-    draw_box(2.5, -0.5, 5, 0.8, 'PORTFOLIO WEIGHTS',
-             ['AAA / AA / A / BBB  |  \u00b110% bounds  |  Monthly'],
-             navy)
+    rounded_box(col2_x + 0.15, col_y + 1.3, 2.4, 0.85, 'white', '#E0E0E0', 0.8)
+    ax.text(col2_x + 0.3, col_y + 1.95, 'DOES:', fontsize=7, fontweight='bold', color=denim, fontfamily='Arial')
+    ax.text(col2_x + 0.3, col_y + 1.7, 'Logistic-growth Prophet:\nOAS(t) = g(t) + s(t) + \u03b5(t)\nForecasts 3 months ahead',
+            fontsize=6.5, color=charcoal, fontfamily='Arial', linespacing=1.3)
 
-    plt.tight_layout(pad=0.2)
-    fig.savefig(path, dpi=200, bbox_inches='tight', facecolor='white')
+    rounded_box(col2_x + 0.15, col_y + 0.1, 2.4, 1.05, '#E8F0FE', '#C4D7F2', 0.8)
+    ax.text(col2_x + 0.3, col_y + 0.95, 'PRODUCES:', fontsize=7, fontweight='bold', color=denim, fontfamily='Arial')
+    ax.text(col2_x + 0.3, col_y + 0.7, '\u0394OAS = forecast \u2212 current\nexpected_return = carry +\nprice return per bucket',
+            fontsize=6.5, color=charcoal, fontfamily='Arial', linespacing=1.3)
+
+    # 2c: Covariance
+    col3_x = col2_x + col_w + col_gap
+    ax.text(col3_x - 0.1, 12.55, '2c', fontsize=9, fontweight='bold', color='white',
+            bbox=dict(boxstyle='circle', facecolor=teal, edgecolor=teal), zorder=5)
+    rounded_box(col3_x, col_y, col_w, col_h, light_bg, teal, 1.5)
+    ax.plot([col3_x, col3_x], [col_y, col_y + col_h], color=teal, linewidth=3, zorder=4)
+    ax.text(col3_x + col_w/2, col_y + col_h - 0.25, 'Covariance & Equilibrium',
+            ha='center', fontsize=9.5, fontweight='bold', color=navy, fontfamily='Arial')
+
+    rounded_box(col3_x + 0.15, col_y + 2.3, 2.4, 0.8, 'white', '#E0E0E0', 0.8)
+    ax.text(col3_x + 0.3, col_y + 2.9, 'TAKES IN:', fontsize=7, fontweight='bold', color=teal, fontfamily='Arial')
+    ax.text(col3_x + 0.3, col_y + 2.6, '\u2022 Monthly spread returns\n\u2022 Market-cap weights w_mkt',
+            fontsize=7, color=charcoal, fontfamily='Arial', linespacing=1.4)
+
+    rounded_box(col3_x + 0.15, col_y + 1.3, 2.4, 0.85, 'white', '#E0E0E0', 0.8)
+    ax.text(col3_x + 0.3, col_y + 1.95, 'DOES:', fontsize=7, fontweight='bold', color=teal, fontfamily='Arial')
+    ax.text(col3_x + 0.3, col_y + 1.7, '\u03a3 = 60-month rolling cov\n\u03c0 = \u03bb \u00d7 \u03a3 \u00d7 w_mkt\n(\u03bb = 2.5 risk aversion)',
+            fontsize=6.5, color=charcoal, fontfamily='Arial', linespacing=1.3)
+
+    rounded_box(col3_x + 0.15, col_y + 0.1, 2.4, 1.05, '#E8F0FE', '#C4D7F2', 0.8)
+    ax.text(col3_x + 0.3, col_y + 0.95, 'PRODUCES:', fontsize=7, fontweight='bold', color=teal, fontfamily='Arial')
+    ax.text(col3_x + 0.3, col_y + 0.7, '\u03a3 = 4\u00d74 covariance matrix\n\u03c0 = equilibrium returns (prior)\nThe "anchor" for BL blending',
+            fontsize=6.5, color=charcoal, fontfamily='Arial', linespacing=1.3)
+
+    # Arrows down from step 2
+    arrow_down(1.85, col_y, col_y - 0.35)
+    arrow_down(col2_x + col_w/2, col_y, col_y - 0.35)
+    arrow_down(col3_x + col_w/2, col_y, col_y - 0.35)
+    ax.text(5.0, col_y - 0.15, '\u03c4, \u03c9              Q (views)              \u03c0, \u03a3',
+            ha='center', fontsize=7, color=charcoal, fontfamily='Arial')
+
+    # ── STEP 3: BLACK-LITTERMAN ──
+    bl_y = 7.2
+    ax.text(0.4, bl_y + 1.3, '\u2462', fontsize=14, fontweight='bold', color='white',
+            bbox=dict(boxstyle='circle', facecolor=navy, edgecolor=navy), zorder=5)
+
+    # Gradient-like effect: darker navy box
+    rounded_box(0.5, bl_y, 9.0, 1.5, navy, navy, 2)
+    ax.text(1.0, bl_y + 1.25, 'BLACK-LITTERMAN: Combining Prior + Views + Regime',
+            fontsize=10, fontweight='bold', color='white', fontfamily='Arial')
+    ax.text(1.0, bl_y + 0.9,
+            'Inputs: \u03c0 (prior), Q (views), \u03a3 (cov), \u03c4 (prior uncertainty), \u03c9 (view uncertainty)',
+            fontsize=7.5, color='white', fontfamily='Arial', alpha=0.85)
+    ax.text(1.0, bl_y + 0.6,
+            '\u03a9 = diag(P\u00b7\u03c4\u03a3\u00b7P\u1d40) \u00d7 \u03c9       '
+            '\u03bc_BL = [(\u03c4\u03a3)^-1 + P\u1d40\u03a9^-1 P]^-1 \u00d7 [(\u03c4\u03a3)^-1 \u03c0 + P\u1d40\u03a9^-1 Q]',
+            fontsize=7, color='white', fontfamily='Arial', alpha=0.8)
+    ax.text(1.0, bl_y + 0.3,
+            'Stress: high \u03c4 + high \u03c9 \u2192 posterior stays near \u03c0 (defensive)    '
+            'Compression: low \u03c4 + low \u03c9 \u2192 posterior incorporates Q (views matter)',
+            fontsize=6.5, color=light_blue, fontfamily='Arial')
+
+    arrow_down(5.0, bl_y, bl_y - 0.3)
+    ax.text(5.3, bl_y - 0.15, '\u03bc_BL posterior returns \u2192 which buckets to overweight',
+            fontsize=7, color=charcoal, fontfamily='Arial', style='italic')
+
+    # ── STEP 4: PORTFOLIO CONSTRUCTION ──
+    pc_y = 5.3
+    ax.text(0.4, pc_y + 1.3, '\u2463', fontsize=14, fontweight='bold', color='white',
+            bbox=dict(boxstyle='circle', facecolor=navy, edgecolor=navy), zorder=5)
+    rounded_box(0.5, pc_y, 9.0, 1.5, light_bg, navy, 2)
+    ax.text(1.0, pc_y + 1.25, 'PORTFOLIO CONSTRUCTION: Tilt Weights by Signal',
+            fontsize=10, fontweight='bold', color=navy, fontfamily='Arial')
+    ax.text(1.0, pc_y + 0.9,
+            'Factor signals:  DTS (50%)  |  Value (25%)  |  Momentum (25%)  \u2014  cross-sectional z-scores',
+            fontsize=7.5, color=charcoal, fontfamily='Arial')
+    ax.text(1.0, pc_y + 0.6,
+            'w_i = w_mkt,i + \u03b1 \u00d7 z_composite,i / \u03a3|z|       '
+            '\u03b1 = 10% tilt    |    Floor at 1%    |    Renormalize to 100%',
+            fontsize=7, color=charcoal, fontfamily='Arial')
+    ax.text(1.0, pc_y + 0.3,
+            'Benchmark: AAA 4% / AA 12% / A 34% / BBB 50%    |    TC drag: 5bp one-way',
+            fontsize=6.5, color='#888888', fontfamily='Arial')
+
+    arrow_down(5.0, pc_y, pc_y - 0.3)
+
+    # ── STEP 5: OUTPUT ──
+    out_y = 4.2
+    ax.text(0.4, out_y + 0.5, '\u2464', fontsize=14, fontweight='bold', color='white',
+            bbox=dict(boxstyle='circle', facecolor=navy, edgecolor=navy), zorder=5)
+    rounded_box(0.5, out_y, 9.0, 0.8, navy, navy, 2)
+    ax.text(1.0, out_y + 0.55, 'OUTPUT: Monthly Portfolio Allocation',
+            fontsize=10, fontweight='bold', color='white', fontfamily='Arial')
+    ax.text(1.0, out_y + 0.2, 'Four weights summing to 100% \u2014 rebalanced monthly \u2014 compared against market-cap benchmark',
+            fontsize=7.5, color='white', fontfamily='Arial', alpha=0.85)
+
+    arrow_down(5.0, out_y, out_y - 0.3)
+    ax.text(5.3, out_y - 0.15, 'stress-tested, simulated, and backtested',
+            fontsize=7, color=charcoal, fontfamily='Arial', style='italic')
+
+    # ── STEP 6: VALIDATION (three boxes) ──
+    val_y = 2.5
+    val_w = 2.85
+    val_h = 1.3
+    ax.text(0.4, val_y + 1.0, '\u2465', fontsize=14, fontweight='bold', color='white',
+            bbox=dict(boxstyle='circle', facecolor=gold, edgecolor=gold), zorder=5)
+
+    for j, (title, items) in enumerate([
+        ('HISTORICAL BACKTEST',
+         'Run full pipeline on 25yr history.\nMeasure: Sharpe, alpha, IR,\nmax drawdown. No look-ahead.'),
+        ('STRESS TESTING',
+         'Shock OAS by +100 to +300bp.\nRecompute signals & weights.\nMeasure: price impact, shifts.'),
+        ('MONTE CARLO',
+         'Resample from real returns.\n5,000 sims \u00d7 24-month paths.\nMeasure: VaR, CVaR, P(Loss).'),
+    ]):
+        bx = 0.5 + j * (val_w + 0.15)
+        rounded_box(bx, val_y, val_w, val_h, '#FAFAFA', '#E0E0E0', 1)
+        ax.text(bx + 0.15, val_y + val_h - 0.2, title,
+                fontsize=8, fontweight='bold', color=gold, fontfamily='Arial')
+        ax.text(bx + 0.15, val_y + val_h - 0.45, items,
+                fontsize=6.5, color=charcoal, fontfamily='Arial', linespacing=1.3)
+
+    # Footer
+    ax.plot([1.0, 9.0], [2.1, 2.1], color='#E0E0E0', linewidth=0.5)
+    ax.text(5.0, 1.85, 'All data sourced from FRED  \u2022  ICE BofA OAS indices  \u2022  No synthetic inputs anywhere in the pipeline',
+            ha='center', fontsize=7, color='#999999', fontfamily='Arial')
+
+    fig.savefig(path, dpi=220, bbox_inches='tight', facecolor='white')
     plt.close(fig)
 
-pipeline_img_path = os.path.join(tmp_dir, 'pipeline_diagram.png')
-create_pipeline_diagram(pipeline_img_path)
+pipeline_img_path = os.path.join(tmp_dir, 'pipeline_full.png')
+create_full_pipeline(pipeline_img_path)
 
 # Caption ABOVE the diagram
 add_action_title(doc, "Three parallel signal layers feed a Bayesian blending engine")
@@ -1037,7 +1179,7 @@ p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 p.paragraph_format.space_before = Pt(2)
 p.paragraph_format.space_after = Pt(10)
 run = p.add_run()
-run.add_picture(pipeline_img_path, width=Inches(6.0))
+run.add_picture(pipeline_img_path, width=Inches(6.5))
 
 
 
@@ -1434,6 +1576,100 @@ for cell in all_cells:
         md_cell_index += 1
     elif cell['cell_type'] == 'code':
         process_code_cell(doc, cell, tmp_dir)
+
+# ═══════════════════════════════════════════════════════════════
+#  BACK PAGE (professional closing)
+# ═══════════════════════════════════════════════════════════════
+
+def create_back_page(path):
+    """Create a professional back page with gradient footer."""
+    fig, ax = plt.subplots(figsize=(8.5, 11))
+    ax.set_xlim(0, 8.5)
+    ax.set_ylim(0, 11)
+    ax.axis('off')
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+    # White background
+    ax.add_patch(plt.Rectangle((0, 0), 8.5, 11, facecolor='white', zorder=0))
+
+    # Top accent line
+    ax.plot([1.5, 7.0], [8.5, 8.5], color='#1B2A4A', linewidth=1.5, zorder=2)
+
+    # Disclaimer
+    ax.text(4.25, 8.0, 'DISCLAIMER', ha='center', va='center',
+            fontsize=10, fontweight='bold', color='#1B2A4A', fontfamily='Arial', zorder=3)
+
+    disclaimer = (
+        "This working paper is for informational and educational purposes only.\n"
+        "It does not constitute investment advice, a recommendation, or an offer to\n"
+        "buy or sell any securities. Past performance, whether backtested or actual,\n"
+        "does not guarantee future results. All analysis is based on publicly available\n"
+        "FRED data and standard quantitative methods. The author makes no warranty\n"
+        "regarding the accuracy or completeness of the information presented.\n"
+        "Readers should consult qualified financial professionals before making\n"
+        "investment decisions."
+    )
+    ax.text(4.25, 7.6, disclaimer, ha='center', va='top',
+            fontsize=8, color='#3C3C3C', fontfamily='Arial', linespacing=1.5, zorder=3)
+
+    # Data sources
+    ax.plot([1.5, 7.0], [6.3, 6.3], color='#E0E0E0', linewidth=0.8, zorder=2)
+
+    ax.text(4.25, 5.9, 'DATA SOURCES', ha='center', va='center',
+            fontsize=10, fontweight='bold', color='#1B2A4A', fontfamily='Arial', zorder=3)
+
+    sources = (
+        "Federal Reserve Economic Data (FRED)\n"
+        "ICE BofA US Corporate Index Option-Adjusted Spread\n"
+        "ICE BofA AAA, AA, A, BBB US Corporate Index OAS\n\n"
+        "All data is freely available at https://fred.stlouisfed.org"
+    )
+    ax.text(4.25, 5.55, sources, ha='center', va='top',
+            fontsize=8, color='#3C3C3C', fontfamily='Arial', linespacing=1.5, zorder=3)
+
+    # Replication
+    ax.plot([1.5, 7.0], [4.4, 4.4], color='#E0E0E0', linewidth=0.8, zorder=2)
+
+    ax.text(4.25, 4.0, 'REPLICATION', ha='center', va='center',
+            fontsize=10, fontweight='bold', color='#1B2A4A', fontfamily='Arial', zorder=3)
+
+    replication = (
+        "The complete analytical pipeline — including data retrieval, model\n"
+        "estimation, backtesting, stress testing, and Monte Carlo simulation —\n"
+        "is implemented in a single Jupyter notebook using Python 3.10+\n"
+        "with standard open-source libraries (hmmlearn, prophet, plotly, scipy)."
+    )
+    ax.text(4.25, 3.6, replication, ha='center', va='top',
+            fontsize=8, color='#3C3C3C', fontfamily='Arial', linespacing=1.5, zorder=3)
+
+    # Bottom gradient band
+    gradient = np.linspace(0, 1, 256).reshape(1, -1)
+    gradient = np.vstack([gradient] * 10)
+    from matplotlib.colors import LinearSegmentedColormap
+    navy_cmap = LinearSegmentedColormap.from_list('navy_grad2',
+        ['#3D5A80', '#1B2A4A', '#0D1B2A'])
+    ax.imshow(gradient, aspect='auto', cmap=navy_cmap,
+              extent=[0, 8.5, 0, 2.0], zorder=1)
+
+    ax.text(4.25, 1.3, 'Michael Tabet, CFA', ha='center', va='center',
+            fontsize=14, fontweight='bold', color='white', fontfamily='Arial', zorder=3)
+    ax.text(4.25, 0.9, 'QUANTITATIVE RESEARCH', ha='center', va='center',
+            fontsize=9, color='#98C1D9', fontfamily='Arial', zorder=3)
+    ax.text(4.25, 0.5, '\u00a9 2026  All rights reserved', ha='center', va='center',
+            fontsize=7.5, color='#98C1D9', fontfamily='Arial', zorder=3)
+
+    fig.savefig(path, dpi=250, bbox_inches='tight', pad_inches=0, facecolor='white')
+    plt.close(fig)
+
+doc.add_page_break()
+back_img_path = os.path.join(tmp_dir, 'back_page.png')
+create_back_page(back_img_path)
+p = doc.add_paragraph()
+p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+p.paragraph_format.space_before = Pt(0)
+p.paragraph_format.space_after = Pt(0)
+run = p.add_run()
+run.add_picture(back_img_path, width=Inches(7.5))
 
 # Add page numbers
 add_page_numbers(doc)

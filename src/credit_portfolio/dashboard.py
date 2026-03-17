@@ -1,13 +1,17 @@
-"""Interactive Streamlit dashboard — 5-tab analytical dashboard.
+"""Interactive Streamlit dashboard — risk metrics & AI chat front and center.
 
 All data is real FRED OAS / total return data. No synthetic bonds.
 
-Tabs:
-  1. HMM / Black-Litterman  — regime detection + BL posterior on real FRED data
-  2. Historical Backtest     — real FRED OAS bucket-rotation backtest
-  3. Prophet Forecasts       — per-bucket OAS forecasts with direction/uncertainty
-  4. Stress Testing          — predefined + custom shock scenarios (bucket level)
-  5. Monte Carlo             — bootstrap/parametric simulation with VaR/CVaR
+Layout (top to bottom):
+  - Risk Summary KPI row (Sharpe, Alpha, Info Ratio, Max DD, VaR, CVaR, P(Loss), Regime)
+  - Ask the Model — always-visible AI chat / explainer
+  - Tab 1: HMM / Black-Litterman
+  - Tab 2: Historical Backtest
+  - Tab 3: Prophet Forecasts
+  - Tab 4: Stress Testing
+  - Tab 5: Monte Carlo
+
+Core analyses (HMM/BL, backtest, Monte Carlo) auto-run on first load.
 """
 
 import streamlit as st
@@ -38,6 +42,8 @@ AMBER = COLORS["amber"]
 GRAY = COLORS["neutral"]
 GREEN = COLORS["green"]
 RED = COLORS["accent"]
+
+from credit_portfolio.analytics.explainer import ModelState, explain_current_state, answer_question
 
 st.set_page_config(page_title="Credit Portfolio Dashboard", layout="wide")
 st.title("Credit Portfolio Dashboard")
@@ -111,6 +117,11 @@ with st.sidebar:
 
     st.divider()
     run_btn = st.button("Run Analysis", type="primary", use_container_width=True)
+
+# Auto-run on first load
+if "auto_ran" not in st.session_state:
+    st.session_state["auto_ran"] = True
+    run_btn = True
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -268,16 +279,189 @@ def _run_monte_carlo(tilt_strength, momentum_window, tc_bps,
 
 
 # ══════════════════════════════════════════════════════════════════
+# AUTO-RUN CORE ANALYSES FOR KPI ROW
+# ══════════════════════════════════════════════════════════════════
+
+if run_btn or "hmm_bl" not in st.session_state:
+    with st.spinner("Fitting HMM + Black-Litterman on FRED data..."):
+        try:
+            st.session_state["hmm_bl"] = _run_hmm_bl(
+                hmm_n_states, hmm_max_iter, bl_risk_aversion, bl_tau)
+        except Exception as e:
+            st.error(f"HMM/BL failed: {e}")
+            st.session_state["hmm_bl"] = None
+
+if run_btn or "hist_result" not in st.session_state:
+    with st.spinner("Running historical backtest on FRED data..."):
+        try:
+            st.session_state["hist_result"] = _run_hist_backtest(
+                hist_tilt_strength, hist_momentum_window, hist_tc_bps)
+        except Exception as e:
+            st.error(f"Historical backtest failed: {e}")
+            st.session_state["hist_result"] = None
+
+if run_btn or "mc_result" not in st.session_state:
+    with st.spinner("Running Monte Carlo simulation..."):
+        try:
+            st.session_state["mc_result"] = _run_monte_carlo(
+                hist_tilt_strength, hist_momentum_window, hist_tc_bps,
+                mc_n_sims, mc_horizon, mc_method, tuple(mc_conf_levels))
+        except Exception as e:
+            st.error(f"Monte Carlo failed: {e}")
+            st.session_state["mc_result"] = None
+
+
+# ══════════════════════════════════════════════════════════════════
+# HELPER: Build model state for explainer
+# ══════════════════════════════════════════════════════════════════
+
+def _build_model_state() -> ModelState:
+    """Build ModelState from all session state results."""
+    state = ModelState()
+
+    hmm_bl = st.session_state.get("hmm_bl")
+    if hmm_bl:
+        ri = hmm_bl["regime_info"]
+        state.regime = ri.get("regime", "")
+        prob_key = f"p_{state.regime.lower()}"
+        state.regime_confidence = ri.get(prob_key, 0.0)
+
+        bl = hmm_bl["bl"]
+        buckets = ["AAA", "AA", "A", "BBB"]
+        state.prior_returns = {b: float(bl["Pi"][i]) for i, b in enumerate(buckets)}
+        state.view_returns = {b: float(bl["Q_vec"][i]) for i, b in enumerate(buckets)}
+        state.posterior_returns = {b: float(bl["mu_BL"][i]) for i, b in enumerate(buckets)}
+
+        if hmm_bl["hmm"].transition_matrix is not None:
+            state.transition_matrix = hmm_bl["hmm"].transition_matrix
+
+    prophet = st.session_state.get("prophet_result")
+    if prophet:
+        state.prophet_forecasts = prophet
+
+    hist = st.session_state.get("hist_result")
+    if hist:
+        state.backtest_stats = hist.stats
+        if not hist.weights_history.empty:
+            last_w = hist.weights_history.iloc[-1]
+            state.current_weights = last_w.to_dict()
+        state.benchmark_weights = {"AAA": 0.04, "AA": 0.12, "A": 0.34, "BBB": 0.50}
+
+    stress = st.session_state.get("stress_result")
+    if stress:
+        state.stress_scenario = stress.scenario_name
+        state.stress_price_impact = stress.price_impact
+
+    mc = st.session_state.get("mc_result")
+    if mc:
+        for _, row in mc.risk_metrics.iterrows():
+            if row["Confidence"] == "95%":
+                state.mc_var_95 = row["VaR"]
+                state.mc_cvar_95 = row["CVaR"]
+        state.mc_p_loss = float((mc.terminal_returns < 0).mean())
+        state.mc_median_return = float(np.median(mc.terminal_returns))
+
+    return state
+
+
+# ══════════════════════════════════════════════════════════════════
+# TOP-LEVEL: RISK SUMMARY KPI ROW (always visible)
+# ══════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════
+# TOP-LEVEL: ASK THE MODEL (first thing on page, always visible)
+# ══════════════════════════════════════════════════════════════════
+
+with st.container():
+    st.subheader("Ask the Model")
+    st.caption("Ask about risk-adjusted returns, attribution, regime implications, or anything the model sees.")
+
+    _ai_col1, _ai_col2 = st.columns([3, 1])
+    with _ai_col1:
+        user_question = st.text_input(
+            "Ask a question about the model:",
+            placeholder="e.g., Are we getting risk-adjusted returns? What's driving alpha? What are the implications of the current regime?",
+        )
+    with _ai_col2:
+        st.write("")  # spacing
+        explain_btn = st.button("Explain Current State", use_container_width=True)
+
+    if explain_btn:
+        state = _build_model_state()
+        with st.spinner("Generating briefing via Groq..."):
+            explanation = explain_current_state(state)
+        st.markdown(explanation)
+
+    if user_question:
+        state = _build_model_state()
+        with st.spinner("Thinking..."):
+            answer = answer_question(user_question, state)
+        st.markdown(answer)
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════════
+# TOP-LEVEL: RISK SUMMARY KPI ROW (always visible)
+# ══════════════════════════════════════════════════════════════════
+
+st.subheader("Risk Summary")
+
+_hmm_bl = st.session_state.get("hmm_bl")
+_hist = st.session_state.get("hist_result")
+_mc = st.session_state.get("mc_result")
+
+if _hmm_bl or _hist or _mc:
+    k1, k2, k3, k4, k5, k6, k7, k8 = st.columns(8)
+
+    # From backtest
+    if _hist:
+        _stats = _hist.stats
+        k1.metric("Sharpe", f"{_stats['sharpe_strategy']:.2f}")
+        k2.metric("Alpha (ann.)", f"{_stats['ann_alpha']:+.2%}")
+        k3.metric("Info Ratio", f"{_stats['information_ratio']:.2f}")
+        k4.metric("Max DD", f"{_stats['max_drawdown_strategy']:.1%}")
+    else:
+        k1.metric("Sharpe", "—")
+        k2.metric("Alpha (ann.)", "—")
+        k3.metric("Info Ratio", "—")
+        k4.metric("Max DD", "—")
+
+    # From Monte Carlo
+    if _mc:
+        _var95 = _cvar95 = _ploss = None
+        for _, _row in _mc.risk_metrics.iterrows():
+            if _row["Confidence"] == "95%":
+                _var95 = _row["VaR"]
+                _cvar95 = _row["CVaR"]
+        _ploss = float((_mc.terminal_returns < 0).mean())
+        k5.metric("95% VaR", f"{_var95 * 100:+.2f}%" if _var95 is not None else "—")
+        k6.metric("95% CVaR", f"{_cvar95 * 100:+.2f}%" if _cvar95 is not None else "—")
+        k7.metric("P(Loss)", f"{_ploss:.1%}")
+    else:
+        k5.metric("95% VaR", "—")
+        k6.metric("95% CVaR", "—")
+        k7.metric("P(Loss)", "—")
+
+    # From HMM
+    if _hmm_bl:
+        k8.metric("Current Regime", _hmm_bl["regime_info"]["regime"])
+    else:
+        k8.metric("Current Regime", "—")
+else:
+    st.info("Click **Run Analysis** to populate risk metrics.")
+
+st.divider()
+
+# ══════════════════════════════════════════════════════════════════
 # MAIN AREA — 5 TABS (all real FRED data)
 # ══════════════════════════════════════════════════════════════════
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "HMM / Black-Litterman",
     "Historical Backtest",
     "Prophet Forecasts",
     "Stress Testing",
     "Monte Carlo",
-    "Ask the Model",
 ])
 
 
@@ -285,15 +469,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 # TAB 1: HMM / BLACK-LITTERMAN (real FRED data)
 # ══════════════════════════════════════════════════════════════════
 with tab1:
-    if run_btn or "hmm_bl" not in st.session_state:
-        with st.spinner("Fitting HMM + Black-Litterman on FRED data..."):
-            try:
-                hmm_bl = _run_hmm_bl(hmm_n_states, hmm_max_iter, bl_risk_aversion, bl_tau)
-                st.session_state["hmm_bl"] = hmm_bl
-            except Exception as e:
-                st.error(f"HMM/BL failed: {e}")
-                st.session_state["hmm_bl"] = None
-
     hmm_bl = st.session_state.get("hmm_bl")
     if hmm_bl is None:
         st.info("Click **Run Analysis** to fit HMM + BL on real FRED data.")
@@ -371,15 +546,6 @@ with tab1:
 # TAB 2: HISTORICAL BACKTEST (real FRED data)
 # ══════════════════════════════════════════════════════════════════
 with tab2:
-    if run_btn or "hist_result" not in st.session_state:
-        with st.spinner("Running historical backtest on FRED data..."):
-            try:
-                hist_result = _run_hist_backtest(hist_tilt_strength, hist_momentum_window, hist_tc_bps)
-                st.session_state["hist_result"] = hist_result
-            except Exception as e:
-                st.error(f"Historical backtest failed: {e}")
-                st.session_state["hist_result"] = None
-
     hist_result = st.session_state.get("hist_result")
     if hist_result is None:
         st.info("Click **Run Analysis** to run historical backtest on real FRED data.")
@@ -613,19 +779,6 @@ with tab4:
 # TAB 5: MONTE CARLO (uses real FRED backtest returns)
 # ══════════════════════════════════════════════════════════════════
 with tab5:
-    if run_btn or "mc_result" not in st.session_state:
-        with st.spinner("Running Monte Carlo simulation..."):
-            try:
-                mc_result = _run_monte_carlo(
-                    hist_tilt_strength, hist_momentum_window, hist_tc_bps,
-                    mc_n_sims, mc_horizon, mc_method,
-                    tuple(mc_conf_levels),
-                )
-                st.session_state["mc_result"] = mc_result
-            except Exception as e:
-                st.error(f"Monte Carlo failed: {e}")
-                st.session_state["mc_result"] = None
-
     mc_result = st.session_state.get("mc_result")
     if mc_result is None:
         st.info("Click **Run Analysis** to run Monte Carlo on real FRED backtest returns.")
@@ -715,84 +868,3 @@ with tab5:
             s4.metric("P(Loss)", f"{(tr < 0).mean():.1%}")
 
 
-# ══════════════════════════════════════════════════════════════════
-# TAB 6: ASK THE MODEL (explainer agent)
-# ══════════════════════════════════════════════════════════════════
-with tab6:
-    from credit_portfolio.analytics.explainer import ModelState, explain_current_state, answer_question
-
-    def _build_model_state() -> ModelState:
-        """Build ModelState from all session state results."""
-        state = ModelState()
-
-        # Regime / BL
-        hmm_bl = st.session_state.get("hmm_bl")
-        if hmm_bl:
-            ri = hmm_bl["regime_info"]
-            state.regime = ri.get("regime", "")
-            prob_key = f"p_{state.regime.lower()}"
-            state.regime_confidence = ri.get(prob_key, 0.0)
-
-            bl = hmm_bl["bl"]
-            buckets = ["AAA", "AA", "A", "BBB"]
-            assets = ["oas_aaa", "oas_aa", "oas_a", "oas_bbb"]
-            state.prior_returns = {b: float(bl["Pi"][i]) for i, b in enumerate(buckets)}
-            state.view_returns = {b: float(bl["Q_vec"][i]) for i, b in enumerate(buckets)}
-            state.posterior_returns = {b: float(bl["mu_BL"][i]) for i, b in enumerate(buckets)}
-
-            if hmm_bl["hmm"].transition_matrix is not None:
-                state.transition_matrix = hmm_bl["hmm"].transition_matrix
-
-        # Prophet
-        prophet = st.session_state.get("prophet_result")
-        if prophet:
-            state.prophet_forecasts = prophet
-
-        # Backtest
-        hist = st.session_state.get("hist_result")
-        if hist:
-            state.backtest_stats = hist.stats
-            # Latest weights
-            if not hist.weights_history.empty:
-                last_w = hist.weights_history.iloc[-1]
-                state.current_weights = last_w.to_dict()
-            state.benchmark_weights = {"AAA": 0.04, "AA": 0.12, "A": 0.34, "BBB": 0.50}
-
-        # Stress
-        stress = st.session_state.get("stress_result")
-        if stress:
-            state.stress_scenario = stress.scenario_name
-            state.stress_price_impact = stress.price_impact
-
-        # Monte Carlo
-        mc = st.session_state.get("mc_result")
-        if mc:
-            for _, row in mc.risk_metrics.iterrows():
-                if row["Confidence"] == "95%":
-                    state.mc_var_95 = row["VaR"]
-                    state.mc_cvar_95 = row["CVaR"]
-            state.mc_p_loss = float((mc.terminal_returns < 0).mean())
-            state.mc_median_return = float(np.median(mc.terminal_returns))
-
-        return state
-
-    st.subheader("Ask the Model")
-    st.caption("Get plain-English explanations of what the model is doing and why.")
-
-    # Full state explanation button
-    if st.button("Explain Current State", use_container_width=True):
-        state = _build_model_state()
-        explanation = explain_current_state(state)
-        st.markdown(explanation)
-
-    st.divider()
-
-    # Q&A interface
-    user_question = st.text_input(
-        "Ask a question about the model:",
-        placeholder="e.g., What regime are we in? How does Black-Litterman work? What's the VaR?",
-    )
-    if user_question:
-        state = _build_model_state()
-        answer = answer_question(user_question, state)
-        st.markdown(answer)
