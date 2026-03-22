@@ -54,70 +54,69 @@ st.title("Credit Portfolio Dashboard")
 with st.sidebar:
     st.header("Configuration")
 
-    with st.form("config_form"):
-        # ── HMM Regime ────────────────────────────────────────────────
-        with st.expander("HMM Regime Detection", expanded=True):
-            hmm_n_states = st.slider("Hidden States", 2, 5, HMM_N_STATES)
-            hmm_max_iter = st.slider("Max EM Iterations", 50, 500, HMM_MAX_ITER, 50)
+    # ── HMM Regime ────────────────────────────────────────────────
+    with st.expander("HMM Regime Detection", expanded=True):
+        hmm_n_states = st.slider("Hidden States", 2, 5, HMM_N_STATES)
+        hmm_max_iter = st.slider("Max EM Iterations", 50, 500, HMM_MAX_ITER, 50)
 
-        # ── Black-Litterman ───────────────────────────────────────────
-        with st.expander("Black-Litterman"):
-            bl_risk_aversion = st.slider(
-                "Risk Aversion (lambda)", 0.5, 5.0, LAMBDA_RISK_AVERSION, 0.1,
-            )
-            bl_tau = st.slider("Tau (prior uncertainty)", 0.001, 0.10, PIPELINE_TAU, 0.001, format="%.3f")
+    # ── Black-Litterman ───────────────────────────────────────────
+    with st.expander("Black-Litterman"):
+        bl_risk_aversion = st.slider(
+            "Risk Aversion (lambda)", 0.5, 5.0, LAMBDA_RISK_AVERSION, 0.1,
+        )
+        bl_tau = st.slider("Tau (prior uncertainty)", 0.001, 0.10, PIPELINE_TAU, 0.001, format="%.3f")
 
-        # ── Prophet Views ─────────────────────────────────────────────
-        with st.expander("Prophet Forecasts"):
-            prophet_horizon = st.slider("Forecast Horizon (months)", 1, 12, PROPHET_HORIZON_MONTHS)
-            prophet_changepoint = st.slider(
-                "Changepoint Prior Scale", 0.01, 0.50,
-                PROPHET_CHANGEPOINT_PRIOR_SCALE, 0.01,
-            )
-            prophet_seasonality = st.slider(
-                "Seasonality Prior Scale", 1.0, 15.0,
-                PROPHET_SEASONALITY_PRIOR_SCALE, 0.5,
-            )
-            prophet_interval = st.slider(
-                "Interval Width", 0.50, 0.99,
-                PROPHET_INTERVAL_WIDTH, 0.05,
-            )
+    # ── Prophet Views ─────────────────────────────────────────────
+    with st.expander("Prophet Forecasts"):
+        prophet_horizon = st.slider("Forecast Horizon (months)", 1, 12, PROPHET_HORIZON_MONTHS)
+        prophet_changepoint = st.slider(
+            "Changepoint Prior Scale", 0.01, 0.50,
+            PROPHET_CHANGEPOINT_PRIOR_SCALE, 0.01,
+        )
+        prophet_seasonality = st.slider(
+            "Seasonality Prior Scale", 1.0, 15.0,
+            PROPHET_SEASONALITY_PRIOR_SCALE, 0.5,
+        )
+        prophet_interval = st.slider(
+            "Interval Width", 0.50, 0.99,
+            PROPHET_INTERVAL_WIDTH, 0.05,
+        )
 
-        # ── Historical Backtest ───────────────────────────────────────
-        with st.expander("Historical Backtest"):
-            hist_tilt_strength = st.slider("Tilt Strength", 0.01, 0.30, 0.10, 0.01)
-            hist_momentum_window = st.slider("Momentum Window (months)", 3, 12, 6)
-            hist_tc_bps = st.slider("Transaction Cost (bps)", 0.0, 20.0, 5.0, 0.5)
+    # ── Historical Backtest ───────────────────────────────────────
+    with st.expander("Historical Backtest"):
+        hist_tilt_strength = st.slider("Tilt Strength", 0.01, 0.30, 0.10, 0.01)
+        hist_momentum_window = st.slider("Momentum Window (months)", 3, 12, 6)
+        hist_tc_bps = st.slider("Transaction Cost (bps)", 0.0, 20.0, 5.0, 0.5)
 
-        # ── Stress Testing ────────────────────────────────────────────
-        with st.expander("Stress Testing"):
-            stress_scenario = st.selectbox(
-                "Scenario",
-                ["Spread Widening +200bp", "BBB Crisis", "Fed Hike Shock", "COVID Replay", "Custom"],
-            )
-            if stress_scenario == "Custom":
-                st.caption("Custom OAS shocks (bp) — will be converted to % for FRED data")
-                custom_shocks_bp = {}
-                for r in RATINGS:
-                    val = st.number_input(f"{r} shock (bp)", value=0, step=10, key=f"stress_{r}")
-                    if val != 0:
-                        custom_shocks_bp[r] = val / 100.0  # convert bp to pct for FRED
-            else:
-                custom_shocks_bp = {}
+    # ── Stress Testing ────────────────────────────────────────────
+    with st.expander("Stress Testing"):
+        stress_scenario = st.selectbox(
+            "Scenario",
+            ["Spread Widening +200bp", "BBB Crisis", "Fed Hike Shock", "COVID Replay", "Custom"],
+        )
+        if stress_scenario == "Custom":
+            st.caption("Custom OAS shocks (bp) — will be converted to % for FRED data")
+            custom_shocks_bp = {}
+            for r in RATINGS:
+                val = st.number_input(f"{r} shock (bp)", value=0, step=10, key=f"stress_{r}")
+                if val != 0:
+                    custom_shocks_bp[r] = val / 100.0  # convert bp to pct for FRED
+        else:
+            custom_shocks_bp = {}
 
-        # ── Monte Carlo ───────────────────────────────────────────────
-        with st.expander("Monte Carlo"):
-            mc_n_sims = st.slider("Simulations", 100, 10000, 1000, 100)
-            mc_horizon = st.slider("Horizon (months)", 3, 60, 12)
-            mc_method = st.radio("Method", ["bootstrap", "parametric"], horizontal=True)
-            mc_conf_levels = st.multiselect(
-                "Confidence Levels",
-                [90.0, 95.0, 99.0],
-                default=[90.0, 95.0, 99.0],
-            )
+    # ── Monte Carlo ───────────────────────────────────────────────
+    with st.expander("Monte Carlo"):
+        mc_n_sims = st.slider("Simulations", 100, 10000, 1000, 100)
+        mc_horizon = st.slider("Horizon (months)", 3, 60, 12)
+        mc_method = st.radio("Method", ["bootstrap", "parametric"], horizontal=True)
+        mc_conf_levels = st.multiselect(
+            "Confidence Levels",
+            [90.0, 95.0, 99.0],
+            default=[90.0, 95.0, 99.0],
+        )
 
-        st.divider()
-        run_btn = st.form_submit_button("Run Analysis", type="primary", use_container_width=True)
+    st.divider()
+    run_btn = st.button("Run Analysis", type="primary", use_container_width=True)
 
 # Auto-run on first load so dashboard is populated on visit
 if "auto_ran" not in st.session_state:

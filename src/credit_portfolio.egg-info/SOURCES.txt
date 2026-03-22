@@ -4,6 +4,7 @@ src/credit_portfolio/__init__.py
 src/credit_portfolio/__main__.py
 src/credit_portfolio/cli.py
 src/credit_portfolio/config.py
+src/credit_portfolio/dashboard.py
 src/credit_portfolio/log.py
 src/credit_portfolio.egg-info/PKG-INFO
 src/credit_portfolio.egg-info/SOURCES.txt
@@ -14,6 +15,9 @@ src/credit_portfolio.egg-info/top_level.txt
 src/credit_portfolio/analytics/__init__.py
 src/credit_portfolio/analytics/attribution.py
 src/credit_portfolio/analytics/commentary.py
+src/credit_portfolio/analytics/explainer.py
+src/credit_portfolio/analytics/monte_carlo.py
+src/credit_portfolio/analytics/stress_test.py
 src/credit_portfolio/backtests/__init__.py
 src/credit_portfolio/backtests/bucket_backtest.py
 src/credit_portfolio/backtests/ml_backtest.py
@@ -44,4 +48,5 @@ src/credit_portfolio/pipelines/factor_pipeline.py
 src/credit_portfolio/pipelines/ml_pipeline.py
 tests/test_config.py
 tests/test_integration.py
+tests/test_no_hardcoding.py
 tests/test_smoke.py
